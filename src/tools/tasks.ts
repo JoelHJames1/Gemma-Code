@@ -23,9 +23,9 @@ export const TaskTrackerTool: ToolDefinition = {
     function: {
       name: 'TaskTracker',
       description:
-        'Plan and track your work on complex tasks. Use this at the start of any multi-step task to create a plan, ' +
-        'then update tasks as you complete them. The task list is always visible to you, even after context compaction. ' +
-        'Actions: "plan" (create task list with subtasks), "update" (mark task done/failed), "clear" (finish tracking).',
+        'Plan and track your work. Create a concise plan (max 10 steps) at the start of multi-step tasks. ' +
+        'Update tasks as you complete them. The task list survives context compaction. ' +
+        'Actions: "plan" (create task list, max 10 subtasks), "update" (mark done/failed), "clear" (finish).',
       parameters: {
         type: 'object',
         properties: {
@@ -68,7 +68,11 @@ export const TaskTrackerTool: ToolDefinition = {
     switch (action) {
       case 'plan': {
         const goal = (args.goal as string) || '(no goal specified)'
-        const subtasks = (args.subtasks as string[]) || []
+        let subtasks = (args.subtasks as string[]) || []
+        // Cap at 10 subtasks — more than that means the plan is too granular
+        if (subtasks.length > 10) {
+          subtasks = subtasks.slice(0, 10)
+        }
         startTaskList(goal)
         for (const desc of subtasks) {
           addTask(desc)

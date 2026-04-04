@@ -22,13 +22,13 @@
 
 # 👻 Gemma Code
 
-### The Local-First Agentic Coding CLI
+### Multi-Agent Coding CLI with Infinite Memory
 
-**Your AI pair programmer that runs entirely on your machine. No API keys. No cloud. No data leaves your laptop.**
+**An AI coding agent with a research-grade memory architecture. Runs 100% locally on llama.cpp. No API keys. No cloud. No data leaves your machine.**
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-1.8K_lines-3178C6?logo=typescript&logoColor=white)](#architecture)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6.2K_lines-3178C6?logo=typescript&logoColor=white)](#architecture)
 [![Bun](https://img.shields.io/badge/Runtime-Bun-f472b6?logo=bun&logoColor=white)](#quick-start)
-[![Ollama](https://img.shields.io/badge/LLM-Ollama-000000?logo=ollama&logoColor=white)](#quick-start)
+[![llama.cpp](https://img.shields.io/badge/Backend-llama.cpp-000000)](#quick-start)
 [![Gemma 4](https://img.shields.io/badge/Model-Gemma_4-4285F4)](#model-support)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -38,82 +38,184 @@
 
 ## What is Gemma Code?
 
-Gemma Code is a **fully autonomous coding agent** that runs in your terminal. Give it a task — it reads your codebase, makes changes, runs tests, and iterates until the job is done. All powered by [Ollama](https://ollama.com) running locally on your machine.
+Gemma Code is a **multi-agent coding system** that runs in your terminal. Give it a task — it plans, spawns specialized workers, reads your codebase, makes changes, runs tests, and iterates until the job is done. It **never forgets** what it's doing, even across long sessions, thanks to a layered memory architecture inspired by [MemGPT](https://memgpt.ai) and [EM-LLM](https://arxiv.org/abs/2407.09450).
 
 Unlike cloud-based coding assistants, Gemma Code:
-- **Never sends your code to any server** — 100% local inference
-- **Requires zero API keys** — just Ollama + a model
-- **Works offline** — no internet needed after model download
-- **Has full filesystem access** — reads, writes, edits, runs commands
-- **Is truly agentic** — decides what tools to use and calls them autonomously
+- **Never sends your code to any server** — 100% local inference via llama.cpp
+- **Requires zero API keys** — just a GGUF model file
+- **Has infinite memory** — episodic memory, scratchpad, task tracking, and persistent storage mean it never loses context
+- **Spawns worker agents** — orchestrator decomposes complex tasks into parallel subtasks
+- **Has vision** — analyze screenshots, mockups, and images
+- **Is security-hardened** — OWASP-aligned capability gating blocks dangerous operations
 
 ---
 
-## Capabilities
-
-### Agentic Tool Calling
-Gemma Code doesn't just suggest code — it **acts**. The agent loop works like this:
+## Architecture Overview
 
 ```
-You: "Fix the failing test in auth.ts"
-
-Gemma Code thinks → calls Grep to find the test
-             → calls Read to examine the test file
-             → calls Read to examine the source file
-             → calls Edit to fix the bug
-             → calls Bash to run the test
-             → sees it passes
-             → reports back: "Fixed the null check in validateToken()"
+User types "gemma"
+  │
+  ▼
+┌──────────────────────────────────────────────────────┐
+│  llama-server (auto-launched, auto-downloaded)       │
+│  gemma4 GGUF + vision | /v1/chat/completions API     │
+└──────────────────────┬───────────────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────────────┐
+│              Context Compiler                         │
+│  Assembles optimal prompt from token budget:          │
+│  ┌─────────────────────────────────────────────┐     │
+│  │  15% System prompt (lean, hardware-aware)   │     │
+│  │  20% Pinned state (goal + tasks + scratch)  │     │
+│  │  10% Retrieved memory (compressed episodes) │     │
+│  │  50% Conversation window (recent messages)  │     │
+│  │   5% Recovery instructions                  │     │
+│  └─────────────────────────────────────────────┘     │
+└──────────────────────┬───────────────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────────────┐
+│              Agent Loop                               │
+│  ┌────────────────────────────────────────────┐      │
+│  │ 10 Tools:                                  │      │
+│  │  Read, Write, Edit, Bash, Glob, Grep       │      │
+│  │  TaskTracker, Scratchpad, SpawnAgent        │      │
+│  │  + Tool call repair (fixes malformed JSON)  │      │
+│  │  + Capability gating (OWASP security)       │      │
+│  └────────────────────────────────────────────┘      │
+│                                                       │
+│  Can spawn worker agents:                             │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐             │
+│  │ Worker   │ │ Worker   │ │ Worker   │             │
+│  │"backend" │ │"tests"   │ │"docs"    │             │
+│  │ Own ctx  │ │ Own ctx  │ │ Own ctx  │             │
+│  └──────────┘ └──────────┘ └──────────┘             │
+└──────────────────────┬───────────────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────────────┐
+│              Memory Hierarchy                         │
+│                                                       │
+│  Layer 1: Scratchpad (always in context)              │
+│    Agent writes findings → survives all compaction    │
+│                                                       │
+│  Layer 2: Task Plan (pinned every call)               │
+│    [x] done [>] doing [ ] pending [!] failed          │
+│                                                       │
+│  Layer 3: Episodic Memory                             │
+│    Conversations segmented into episodes at:          │
+│    - Topic shifts (heuristic + surprisal logprobs)    │
+│    - File context switches                            │
+│    - Error spikes, task transitions                   │
+│    Retrieved with temporal contiguity (±1 neighbors)  │
+│    Compressed before injection (RECOMP, 77% savings)  │
+│                                                       │
+│  Layer 4: Semantic Memory                             │
+│    TF-IDF vector search with metadata filtering       │
+│    Fact supersession (old facts invalidated)           │
+│    Cached retrieval (LRU, 30s TTL)                    │
+│                                                       │
+│  Layer 5: Event Log (ground truth)                    │
+│    Append-only JSONL of every action                  │
+│    Queryable by type, actor, scope, time              │
+│                                                       │
+│  Layer 6: Checkpoints                                 │
+│    Auto-saved every 5 tool rounds                     │
+│    /resume to recover from crashes                    │
+└──────────────────────────────────────────────────────┘
 ```
 
-The model autonomously decides which tools to call, in what order, up to 30 consecutive tool rounds per task.
+---
 
-### 6 Built-In Tools
+## Features
 
-| Tool | What It Does | Example |
-|------|-------------|---------|
-| **Read** | Read files with line numbers, supports offset/limit for large files | Read `src/auth.ts` lines 50-100 |
-| **Write** | Create new files or overwrite existing ones, auto-creates directories | Write a new `utils/helpers.ts` |
-| **Edit** | Precise string replacement — find exact text and replace it | Change `let` to `const` on a specific line |
-| **Bash** | Execute any shell command — git, npm, tests, builds, etc. | `npm test`, `git diff`, `ls -la` |
-| **Glob** | Find files by pattern across the project | `**/*.test.ts`, `src/**/*.tsx` |
-| **Grep** | Search file contents with regex, uses ripgrep when available | Find all `TODO` comments |
+### Infinite Memory System
 
-### Streaming Responses
-In interactive mode, text streams to your terminal as the model generates it — no waiting for the full response. Tool calls show real-time progress:
+The agent **never forgets**. Six layers of persistent state ensure continuity across long sessions and even across restarts:
+
+| Layer | Survives | How It Works |
+|-------|----------|-------------|
+| **Scratchpad** | Everything | Agent writes notes to `.gemma-code/scratchpad.md` — always loaded into context |
+| **Task Plan** | Compaction | TaskTracker creates plans, progress pinned before every model call |
+| **Goal Anchor** | Compaction | The user's original request is re-injected every turn |
+| **Episodic Memory** | Sessions | Conversations segmented into episodes, stored with metadata, searchable |
+| **Semantic Facts** | Sessions | TF-IDF vector search with supersession (stale facts auto-invalidated) |
+| **Checkpoints** | Crashes | Full conversation snapshots, auto-saved + `/resume` to restore |
+
+### Episodic Segmentation (EM-LLM Approach)
+
+Instead of compacting raw message chunks, Gemma Code segments conversations into **coherent episodes** using:
+
+- **Surprisal boundaries**: logprobs from llama-server detect unexpected content (topic shifts)
+- **Heuristic signals**: new user messages, file context switches, error spikes, task transitions
+- **Temporal contiguity retrieval**: when searching, retrieves matching episodes *plus* their neighbors to preserve causal context
+
+### Retrieval Compression (RECOMP Pattern)
+
+Retrieved episodes are **compressed before injection** using extractive compression:
+- Score each line by token overlap with the current query
+- Keep only query-relevant lines, drop noise
+- 77% token reduction in testing (241 → 55 tokens)
+- Preserves headers, file paths, error messages, and structural markers
+
+### Multi-Agent Orchestrator
+
+For complex tasks, the agent can spawn **specialized workers**:
 
 ```
-❯ What's in the src directory?
+❯ Refactor the entire auth module with tests and docs
 
-  ⚡ Glob **/*.ts
-  ⚡ Read src/index.ts
+Agent spawns:
+  🤖 "backend"  → Refactors auth code
+  🤖 "tests"    → Writes unit tests
+  🤖 "docs"     → Updates documentation
 
-Here are the files in src/...
+Each worker gets its own context, tools, and task.
+Results collected and synthesized by the orchestrator.
 ```
 
-### Git-Aware Context
-Gemma Code automatically detects:
-- Whether you're in a git repository
-- Current branch name
-- Uncommitted changes
-- Project name from the directory
+### Vision
 
-This context is injected into every conversation so the model understands your project state.
+Analyze images directly in the terminal:
 
-### Interactive REPL
-Full interactive terminal with:
-- **Streaming output** — see responses as they generate
-- **Conversation memory** — the model remembers your full conversation
-- **Slash commands** — `/clear`, `/model`, `/history`, `/tokens`, `/config`, `/help`, `/exit`
-- **Model switching** — change models mid-conversation with `/model gemma4:12b`
-- **Ctrl+C handling** — interrupt gracefully without losing your session
-
-### Non-Interactive Mode
-Perfect for scripts, CI/CD, and piping:
-```bash
-gemma -p "Explain what this project does" > summary.txt
-gemma -p "List all TODO comments" --model gemma4:12b
 ```
+❯ /Users/joel/screenshot.png What's wrong with this UI?
+❯ /paste Implement this mockup          (clipboard image)
+❯ /vision design.png Convert to React components
+```
+
+- Auto-detects image paths in prompts (handles spaces and escaped paths)
+- Clipboard paste support on macOS (`/paste`)
+- Works with gemma4's native multimodal capabilities
+
+### Tool Call Repair
+
+Even strong models occasionally produce malformed tool calls. The repair layer fixes:
+
+- Trailing commas, single quotes, unquoted keys in JSON
+- Markdown code fences around JSON
+- Tool name case mismatches (`read` → `Read`, `shell` → `Bash`)
+- Common aliases (`search` → `Grep`, `notepad` → `Scratchpad`)
+- Missing closing braces/brackets
+
+### Security (OWASP Capability Gating)
+
+Every tool call passes through a security policy before execution:
+
+| Level | Examples | Behavior |
+|-------|----------|----------|
+| **Allow** | Read/Write within project, `npm test`, `git status` | Proceed |
+| **Confirm** | `rm -rf`, `git push --force`, `git reset --hard`, files outside project | Human confirmation required |
+| **Deny** | `curl \| sh`, `eval`, `dd`, `mkfs` | Hard blocked, no override |
+
+### Hardware-Aware
+
+The system prompt adapts to your hardware:
+- Detects RAM (free/total), CPU cores, CPU model at runtime
+- Low RAM: model avoids spawning many agents, keeps results small
+- Context window size detected per model (gemma4 E4B = 256K tokens)
+
+### Request Interruption
+
+Type a new message while the model is responding — it aborts the current request and starts your new one immediately. Ctrl+C also interrupts without exiting.
 
 ---
 
@@ -121,220 +223,135 @@ gemma -p "List all TODO comments" --model gemma4:12b
 
 ### Prerequisites
 - [Bun](https://bun.sh) >= 1.1.0
-- [Ollama](https://ollama.com) installed and running
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) (`brew install llama.cpp`)
 
 ### Install
 
 ```bash
-# 1. Install Ollama (if not already)
-curl -fsSL https://ollama.com/install.sh | sh
+# 1. Install llama.cpp
+brew install llama.cpp
 
-# 2. Pull the model
-ollama pull gemma4:31b
-
-# 3. Clone and install
+# 2. Clone and install
 git clone https://github.com/JoelHJames1/Qwen-Code.git
 cd Qwen-Code
 bun install
 
-# 4. Link the command globally
+# 3. Link the command globally
 bun link
 
-# 5. Run it!
+# 4. Run it! (auto-downloads gemma4 on first run)
 gemma
 ```
 
-### Usage
+### Configuration
 
-```bash
-# Interactive mode (REPL)
-gemma
-
-# Non-interactive (print mode)
-gemma -p "Fix the type error in utils.ts"
-
-# Use a different model
-gemma --model gemma4:12b
-
-# Show help
-gemma --help
-
-# Show version
-gemma --version
-```
-
----
-
-## Model Support
-
-Gemma Code works with **any Ollama model** that supports tool calling. Default is `gemma4:31b`.
-
-| Model | Command | Notes |
-|-------|---------|-------|
-| **Gemma 4 31B** (default) | `gemma` | Best balance of capability and quality |
-| Gemma 4 12B | `gemma --model gemma4:12b` | Faster, lighter tasks |
-| Qwen 3.5 9B | `gemma --model qwen3.5:9b` | Alibaba's strong coder |
-| Llama 3.1 | `gemma --model llama3.1` | Meta's open model |
-| Codestral | `gemma --model codestral` | Code-specialized |
-| DeepSeek Coder V2 | `gemma --model deepseek-coder-v2` | Code-focused |
-
-Override the default via environment variable:
-```bash
-export OLLAMA_MODEL=gemma4:12b
-gemma
-```
-
----
-
-## Architecture
-
-Clean, modular TypeScript — 16 files, ~1,900 lines. No bloat.
-
-```
-src/
-├── index.ts              CLI entry point + interactive REPL
-│                         Argument parsing, slash commands, readline loop
-│
-├── agent.ts              Core agent loop
-│                         Send → tool_calls → execute → feed back → repeat
-│                         Error recovery, context pruning, self-correction
-│                         Safety limit: 30 consecutive tool rounds
-│
-├── ollama.ts             Ollama API client
-│                         OpenAI-compatible /v1/chat/completions
-│                         Streaming via SSE with incremental tool call assembly
-│                         Retry with backoff on transient failures
-│
-├── context.ts            Environment awareness
-│                         Git branch/status detection
-│                         OS, shell, user, date context
-│                         Project bootstrap (package.json, README, etc.)
-│                         System prompt construction
-│
-├── errors.ts             Error classification & retry logic
-│                         Categorizes: timeout, connection, context overflow
-│                         Exponential backoff for transient failures
-│
-├── context-window.ts     Context window management
-│                         Token estimation, conversation pruning
-│                         Model-aware context budgets
-│
-├── config.ts             Configuration system
-│                         ~/.config/gemma-code/config.json
-│                         Layered: CLI > env > file > defaults
-│
-├── tools/
-│   ├── index.ts          Tool registry — maps names to implementations
-│   ├── types.ts          ToolDefinition interface (spec + execute)
-│   ├── read.ts           File reading with line numbers + pagination
-│   ├── write.ts          File creation with auto-mkdir
-│   ├── edit.ts           Exact string replacement with fuzzy hints
-│   ├── bash.ts           Shell execution with timeout + output capture
-│   ├── glob.ts           Pattern matching (Bun.Glob + find fallback)
-│   └── grep.ts           Content search (ripgrep + grep fallback)
-│
-└── ui/
-    └── display.ts        Terminal output — banner, spinner, colors, formatting
-```
-
-### The Agent Loop (How It Works)
-
-```
-┌──────────────┐
-│  User Input  │
-└──────┬───────┘
-       ▼
-┌──────────────────────────────────────────────────┐
-│                  Agent Loop                       │
-│                                                  │
-│  ┌─────────────┐    ┌──────────────────────┐    │
-│  │ Send to     │───▶│ Model returns        │    │
-│  │ Ollama with │    │ tool_calls?          │    │
-│  │ tools       │    └──────────┬───────────┘    │
-│  └─────────────┘               │                 │
-│        ▲                  Yes  │  No             │
-│        │                  ▼    ▼                 │
-│  ┌─────┴───────┐   ┌──────┐  ┌──────────────┐  │
-│  │ Append tool │◀──│Execute│  │ Return text  │  │
-│  │ results to  │   │ tools │  │ to user      │  │
-│  │ conversation│   └──────┘  └──────────────┘  │
-│  └─────────────┘                                 │
-└──────────────────────────────────────────────────┘
-```
-
-### Tool Calling Protocol
-
-Tools are defined as JSON Schema and sent to the model via the OpenAI-compatible API:
+Create `~/.config/gemma-code/config.json`:
 
 ```json
 {
-  "type": "function",
-  "function": {
-    "name": "Edit",
-    "description": "Perform an exact string replacement in a file...",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "file_path": { "type": "string" },
-        "old_string": { "type": "string" },
-        "new_string": { "type": "string" }
-      },
-      "required": ["file_path", "old_string", "new_string"]
-    }
-  }
+  "model": "gemma4:e4b",
+  "hfRepo": "bartowski/google_gemma-4-E4B-it-GGUF",
+  "gpuLayers": 99,
+  "llamaContextSize": 8192,
+  "flashAttn": true
 }
 ```
 
-The model responds with structured `tool_calls` that the agent executes and feeds back.
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `gemma4:31b` | Default model |
-
----
-
-## Safety Features
-
-- **Max 30 tool rounds** per user message — prevents infinite loops
-- **Output truncation** — tool results over 50KB are truncated to avoid context overflow
-- **Context window management** — automatic conversation pruning when approaching limits
-- **Command timeouts** — Bash commands timeout after 30 seconds (configurable up to 5 minutes)
-- **Edit uniqueness check** — warns if a string replacement would match multiple locations
-- **Self-correction** — nudges the model to try different approaches after repeated tool failures
-- **No destructive defaults** — the model is instructed to ask before force-pushing or deleting
-
----
-
-## Compared to Cloud-Based Alternatives
-
-| Feature | Gemma Code | Cloud CLIs |
-|---------|:---------:|:----------:|
-| Runs 100% locally | Yes | No |
-| Requires API key | No | Yes |
-| Works offline | Yes | No |
-| Your code stays private | Yes | Depends |
-| Free to use | Yes | $$$ |
-| Agentic tool calling | Yes | Yes |
-| Streaming responses | Yes | Yes |
-| Custom model support | Any Ollama model | Vendor-locked |
-
----
-
-## Contributing
-
-Contributions welcome! The codebase is intentionally small and readable.
-
-```bash
-git clone https://github.com/JoelHJames1/Qwen-Code.git
-cd Qwen-Code
-bun install
-bun run dev  # Watch mode
+For the larger 31B model:
+```json
+{
+  "model": "gemma4:31b",
+  "hfRepo": "bartowski/google_gemma-4-31B-it-GGUF",
+  "gpuLayers": 99,
+  "llamaContextSize": 8192,
+  "flashAttn": true
+}
 ```
+
+---
+
+## REPL Commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show all commands |
+| `/exit` | Exit the session |
+| `/clear` | Clear conversation history |
+| `/vision <image> <prompt>` | Send image with prompt |
+| `/paste [prompt]` | Send clipboard image |
+| `/tasks` | Show current task plan |
+| `/agents` | Show multi-agent status |
+| `/scratchpad` | View agent's persistent notes |
+| `/episodes [query]` | Show/search episodic memory |
+| `/checkpoint` | Save conversation state |
+| `/resume` | Resume from last checkpoint |
+| `/budget` | Show context budget allocation |
+| `/eventlog [recent]` | Show event log stats |
+| `/security` | Show security policy |
+| `/tokens` | Show context window usage |
+| `/config` | Show resolved configuration |
+
+---
+
+## File Structure
+
+```
+src/
+├── index.ts              CLI entry point, REPL, request interruption
+├── agent.ts              Core agent loop with abort support
+├── api.ts                OpenAI-compatible client for llama-server
+├── llama-server.ts       Server process lifecycle management
+├── config.ts             Layered config (CLI > env > file > defaults)
+│
+├── context-compiler.ts   Token-budgeted prompt assembly (5 slices)
+├── context.ts            Environment detection, system prompt
+├── context-window.ts     Token estimation, model context windows
+│
+├── memory.ts             Smart compaction, fact supersession, vector search
+├── episodes.ts           Episodic segmentation, contiguity retrieval
+├── surprisal.ts          Logprob-based boundary detection (EM-LLM)
+├── compression.ts        Extractive retrieval compression (RECOMP)
+├── vectorsearch.ts       TF-IDF search, metadata filtering, LRU cache
+├── scratchpad.ts         Persistent agent notepad
+├── tasks.ts              Task tracking with persistence
+├── checkpoint.ts         Conversation state snapshots
+├── eventlog.ts           Append-only JSONL event log
+│
+├── orchestrator.ts       Multi-agent spawning and coordination
+├── capabilities.ts       OWASP capability gating (allow/confirm/deny)
+├── errors.ts             Error classification and retry logic
+├── tool-repair.ts        Fix malformed tool calls (JSON + name repair)
+│
+├── tools/
+│   ├── index.ts          Tool registry (10 tools)
+│   ├── types.ts          ToolDefinition interface
+│   ├── read.ts           File reading with pagination
+│   ├── write.ts          File creation with auto-mkdir
+│   ├── edit.ts           String replacement with fuzzy hints
+│   ├── bash.ts           Shell execution with timeout
+│   ├── glob.ts           File pattern matching
+│   ├── grep.ts           Content search (rg/grep fallback)
+│   ├── tasks.ts          TaskTracker tool
+│   ├── scratchpad.ts     Scratchpad tool
+│   └── agents.ts         SpawnAgent tool
+│
+└── ui/
+    └── display.ts        Terminal output, banner, spinner, colors
+```
+
+---
+
+## Research References
+
+The memory architecture is informed by:
+
+- **MemGPT** (Packer et al., 2023) — OS-inspired virtual context management
+- **EM-LLM** (Fountas et al., 2024) — Episodic memory with surprisal boundaries and contiguity retrieval
+- **RECOMP** (ICLR 2024) — Retrieval-augmented compression
+- **StreamingLLM** (Xiao et al., 2023) — Attention sink stabilization
+- **RULER** (Hsieh et al., 2024) — Effective context length evaluation
+- **LongMemEval** (Wu et al., 2024) — Long-term memory benchmarks (updates, abstention)
+- **OWASP LLM Top 10** — Security controls for tool-using agents
 
 ---
 
@@ -346,13 +363,8 @@ MIT
 
 <div align="center">
 
-```
-    ████▀▀██████▀▀████▀▀██████▀▀████
-      ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
-```
+**👻 Gemma Code — Your code. Your machine. Infinite memory.**
 
-**👻 Gemma Code — Your code. Your machine. Your agent.**
-
-*Powered by Ollama. No cloud required.*
+*33 source files. 6,200 lines. Zero cloud dependencies.*
 
 </div>

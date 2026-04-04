@@ -48,7 +48,7 @@ const DEFAULTS: GemmaConfig = {
   requestTimeoutMs: 120_000,
   llamaPort: 8776,
   gpuLayers: 99,
-  llamaContextSize: 0,
+  llamaContextSize: 32768,
   flashAttn: true,
   llamaExtraArgs: [],
 }
