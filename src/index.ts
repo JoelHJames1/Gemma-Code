@@ -33,6 +33,8 @@ import { saveCheckpoint, loadLatestCheckpoint, listCheckpoints } from './checkpo
 import { readScratchpad, clearScratchpad } from './scratchpad.js'
 import { logEvent, getEventLogStats, getRecentActivitySummary } from './eventlog.js'
 import { initCapabilities, getActiveProfile, setConfirmCallback } from './capabilities.js'
+import { startSession, endSession, getCurrentIdentity, processInterjection } from './identity/bridge.js'
+import { getMemoryStats } from './identity/autobiographical.js'
 import { getEpisodeStats, searchEpisodes } from './episodes.js'
 import { getBudgetStats } from './context-compiler.js'
 import { ensureAndStartServer, stopLlamaServer, registerCleanup } from './llama-server.js'
@@ -301,6 +303,9 @@ async function interactiveMode(serverConfig: ServerConfig) {
   // Initialize capability gating with project root
   initCapabilities(process.cwd())
 
+  // Load persistent identity
+  const identityContext = startSession()
+
   process.stderr.write(banner())
   logEvent('session_start', 'system', { model: appConfig.model, cwd: process.cwd() })
   infoMsg(`Backend: llama.cpp`)
@@ -345,6 +350,7 @@ async function interactiveMode(serverConfig: ServerConfig) {
       const knownCommands = new Set(['/exit', '/quit', '/q', '/clear', '/vision', '/paste',
         '/tasks', '/tasks-clear', '/agents', '/agents-clear', '/scratchpad',
         '/checkpoint', '/resume', '/episodes', '/budget', '/eventlog',
+        '/identity', '/memories', '/security',
         '/config', '/refresh', '/history', '/tokens', '/help', '/model'])
       if (knownCommands.has(cmd)) {
         // If processing, abort current work for /clear, /exit etc
@@ -368,6 +374,8 @@ async function interactiveMode(serverConfig: ServerConfig) {
       } else {
         // Queue the message — agent will see it between tool rounds
         queuedMessage = input
+        // Process through identity system (detect corrections, feedback)
+        processInterjection(input)
         process.stderr.write(DIM(`\n  💬 Message queued (agent will see it next round)\n`))
       }
       return
@@ -450,7 +458,9 @@ async function interactiveMode(serverConfig: ServerConfig) {
   }
 
   rl.on('close', () => {
-    process.stderr.write(DIM('\nGoodbye!\n'))
+    // Save identity — learn from this session before dying
+    endSession(conversation)
+    process.stderr.write(DIM('\nGoodbye! I\'ll remember this session.\n'))
     stopLlamaServer()
     process.exit(0)
   })
@@ -641,6 +651,36 @@ function handleCommand(
       break
     }
 
+    case '/identity': {
+      const id = getCurrentIdentity()
+      if (!id) {
+        infoMsg('No identity loaded')
+        break
+      }
+      infoMsg(`Identity: ${id.name} (v${id.version}, ${id.sessionCount} sessions)`)
+      infoMsg(`Core: ${id.core}`)
+      infoMsg(`Traits: ${id.personality.filter(t => t.strength >= 0.5).map(t => t.trait).join(', ')}`)
+      infoMsg(`Relationships: ${id.relationships.length}`)
+      infoMsg(`Beliefs: ${id.beliefs.filter(b => b.status === 'active').length} active`)
+      infoMsg(`Skills: ${id.skills.length}`)
+      infoMsg(`Goals: ${id.goals.filter(g => g.status === 'active').length} active`)
+      infoMsg(`Lessons: ${id.lessonLearned.length}`)
+      if (id.recentReflections.length > 0) {
+        infoMsg(`Last reflection: ${id.recentReflections[id.recentReflections.length - 1]}`)
+      }
+      break
+    }
+
+    case '/memories': {
+      const stats = getMemoryStats()
+      infoMsg(`Autobiographical memories: ${stats.total}`)
+      infoMsg(`Avg significance: ${(stats.avgSignificance * 100).toFixed(0)}%`)
+      for (const [type, count] of Object.entries(stats.byType)) {
+        infoMsg(`  ${type}: ${count}`)
+      }
+      break
+    }
+
     case '/security': {
       const profile = getActiveProfile()
       infoMsg(`Security profile: ${profile.name}`)
@@ -682,6 +722,8 @@ function handleCommand(
       infoMsg('  /vision <image> <prompt>  Send image with prompt')
       infoMsg('  /paste [prompt]           Send clipboard image with prompt')
       infoMsg('  /tasks                    Show current task plan')
+      infoMsg('  /identity                 Show AI identity and stats')
+      infoMsg('  /memories                 Show autobiographical memories')
       infoMsg('  /scratchpad               View agent notes')
       infoMsg('  /agents                   Show multi-agent status')
       infoMsg('  /checkpoint               Save conversation state')
