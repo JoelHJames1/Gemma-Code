@@ -27,6 +27,8 @@ import { resolveConfig, formatConfig, type GemmaConfig } from './config.js'
 import { estimateConversationTokens, getTokenBudget } from './context-window.js'
 import { getUsageStats } from './memory.js'
 import { getTaskList, formatTaskListForPrompt, clearTasks, loadPersistedTasks } from './tasks.js'
+import { setAgentToolConfig } from './tools/agents.js'
+import { formatOrchestratorStatus, getOrchestratorState, clearOrchestrator } from './orchestrator.js'
 import { ensureAndStartServer, stopLlamaServer, registerCleanup } from './llama-server.js'
 import {
   banner,
@@ -195,6 +197,24 @@ async function main() {
     })
 
     serverConfig = { baseUrl, model: appConfig.model, requestTimeoutMs: appConfig.requestTimeoutMs }
+
+    // Wire up multi-agent system with server config
+    setAgentToolConfig(serverConfig, (event) => {
+      switch (event.type) {
+        case 'worker_start':
+          infoMsg(`🤖 Agent "${event.worker}" starting: ${event.task}`)
+          break
+        case 'tool_call':
+          process.stderr.write(DIM(`  ⚡ [${event.worker}] ${event.tool}\n`))
+          break
+        case 'worker_done':
+          infoMsg(`✅ Agent "${event.worker}" done`)
+          break
+        case 'worker_error':
+          errorMsg(`Agent "${event.worker}" failed: ${event.error}`)
+          break
+      }
+    })
   } catch (err: any) {
     errorMsg(err.message)
     process.exit(1)
@@ -474,6 +494,22 @@ function handleCommand(
       break
     }
 
+    case '/agents': {
+      const state = getOrchestratorState()
+      if (!state) {
+        infoMsg('No active multi-agent task. The agent will spawn workers when needed.')
+      } else {
+        process.stderr.write(DIM(formatOrchestratorStatus()) + '\n')
+      }
+      break
+    }
+
+    case '/agents-clear': {
+      clearOrchestrator()
+      infoMsg('Multi-agent task cleared')
+      break
+    }
+
     case '/tasks-clear': {
       clearTasks()
       infoMsg('Task list cleared')
@@ -510,7 +546,7 @@ function handleCommand(
       infoMsg('  /vision <image> <prompt>  Send image with prompt')
       infoMsg('  /paste [prompt]           Send clipboard image with prompt')
       infoMsg('  /tasks                    Show current task plan')
-      infoMsg('  /tasks-clear              Clear task plan')
+      infoMsg('  /agents                   Show multi-agent status')
       infoMsg('  /tokens                   Show context window usage')
       infoMsg('  /config                   Show configuration')
       infoMsg('  /refresh                  Refresh system prompt')
