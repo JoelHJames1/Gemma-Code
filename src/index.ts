@@ -29,6 +29,8 @@ import { getUsageStats } from './memory.js'
 import { getTaskList, formatTaskListForPrompt, clearTasks, loadPersistedTasks } from './tasks.js'
 import { setAgentToolConfig } from './tools/agents.js'
 import { formatOrchestratorStatus, getOrchestratorState, clearOrchestrator } from './orchestrator.js'
+import { saveCheckpoint, loadLatestCheckpoint, listCheckpoints } from './checkpoint.js'
+import { readScratchpad, clearScratchpad } from './scratchpad.js'
 import { ensureAndStartServer, stopLlamaServer, registerCleanup } from './llama-server.js'
 import {
   banner,
@@ -516,6 +518,36 @@ function handleCommand(
       break
     }
 
+    case '/scratchpad': {
+      const notes = readScratchpad(process.cwd())
+      if (!notes.trim()) {
+        infoMsg('Scratchpad is empty. The agent writes notes here during work.')
+      } else {
+        process.stderr.write(DIM(notes) + '\n')
+      }
+      break
+    }
+
+    case '/checkpoint': {
+      saveCheckpoint(conversation, { goal: 'manual checkpoint' })
+      infoMsg('Checkpoint saved')
+      break
+    }
+
+    case '/resume': {
+      const cp = loadLatestCheckpoint()
+      if (!cp) {
+        infoMsg('No checkpoints found')
+      } else {
+        conversation.length = 0
+        conversation.push(...cp.conversation)
+        infoMsg(`Resumed from checkpoint (${cp.date})`)
+        infoMsg(`${cp.conversation.length} messages restored`)
+        if (cp.metadata?.goal) infoMsg(`Goal: ${cp.metadata.goal}`)
+      }
+      break
+    }
+
     case '/config': {
       infoMsg('Resolved configuration:')
       process.stderr.write(DIM(formatConfig(appConfig)) + '\n')
@@ -546,7 +578,10 @@ function handleCommand(
       infoMsg('  /vision <image> <prompt>  Send image with prompt')
       infoMsg('  /paste [prompt]           Send clipboard image with prompt')
       infoMsg('  /tasks                    Show current task plan')
+      infoMsg('  /scratchpad               View agent notes')
       infoMsg('  /agents                   Show multi-agent status')
+      infoMsg('  /checkpoint               Save conversation state')
+      infoMsg('  /resume                   Resume from last checkpoint')
       infoMsg('  /tokens                   Show context window usage')
       infoMsg('  /config                   Show configuration')
       infoMsg('  /refresh                  Refresh system prompt')

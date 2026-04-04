@@ -1,0 +1,19 @@
+{
+  "timestamp": 1775319083171,
+  "date": "2026-04-04T16:11:23.171Z",
+  "messageCount": 2,
+  "metadata": {
+    "goal": "fix auth bug",
+    "round": 3
+  },
+  "conversation": [
+    {
+      "role": "system",
+      "content": "test"
+    },
+    {
+      "role": "user",
+      "content": "fix the auth bug"
+    }
+  ]
+}

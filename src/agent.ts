@@ -25,6 +25,8 @@ import { classifyOllamaError, errorKindMessage } from './errors.js'
 import { pruneIfNeeded, estimateConversationTokens, getTokenBudget } from './context-window.js'
 import { smartCompact } from './memory.js'
 import { formatTaskListForPrompt, loadPersistedTasks, getTaskList } from './tasks.js'
+import { formatScratchpadForPrompt } from './scratchpad.js'
+import { saveCheckpoint } from './checkpoint.js'
 
 const MAX_TOOL_ROUNDS = 30 // Safety limit on consecutive tool-call rounds
 
@@ -76,6 +78,9 @@ export async function runAgent(
   // Add user message (text or multimodal)
   conversation.push({ role: 'user', content: userMessage })
 
+  // Anchor the goal — store it so we can re-inject after compaction
+  const goalAnchor = userMessage
+
   const tools = getToolSpecs()
   let rounds = 0
   let emptyRetries = 0
@@ -90,8 +95,16 @@ export async function runAgent(
     // Fallback: hard prune if still over budget
     pruneIfNeeded(conversation, config.model)
 
-    // Inject current task list so the model never forgets what it's working on
-    injectTaskContext(conversation)
+    // Inject persistent context that survives compaction:
+    // 1. Task list (what we're doing)
+    // 2. Scratchpad (what we've learned)
+    // 3. Goal anchor (what the user asked for)
+    injectPersistentContext(conversation, goalAnchor)
+
+    // Auto-checkpoint every 5 rounds
+    if (rounds % 5 === 0 && rounds > 0) {
+      saveCheckpoint(conversation, { goal: goalAnchor, round: rounds })
+    }
 
     // Call the model with error classification and retry
     let msg: Message
@@ -311,32 +324,61 @@ async function executeToolCall(
   }
 }
 
-const TASK_CONTEXT_MARKER = '[TASK_CONTEXT]'
+const PERSISTENT_CONTEXT_MARKER = '[PERSISTENT_CONTEXT]'
 
 /**
- * Inject the current task list as a system message right before the model call.
- * This ensures the model always knows what it's working on, even after compaction.
- * Removes any previous task context message first to avoid duplication.
+ * Inject persistent context that survives context compaction.
+ * This is the agent's "always visible" state — injected at the END
+ * of the conversation (where the model attends most) before every call.
+ *
+ * Contains:
+ * 1. Original user goal (never forget what we're doing)
+ * 2. Task plan with progress tracking
+ * 3. Scratchpad notes (agent's external brain)
+ * 4. Instructions for self-recovery if context was lost
  */
-function injectTaskContext(conversation: Message[]): void {
+function injectPersistentContext(conversation: Message[], goalAnchor: string): void {
   // Load persisted tasks if we don't have any in memory
   if (!getTaskList()) loadPersistedTasks()
 
+  const sections: string[] = []
+
+  // 1. Goal anchor — always remind the model what the user asked for
+  sections.push(`## Original Goal\n${goalAnchor}`)
+
+  // 2. Task plan
   const taskPrompt = formatTaskListForPrompt()
-  if (!taskPrompt) return
+  if (taskPrompt) {
+    sections.push(taskPrompt)
+  }
 
-  const content = `${TASK_CONTEXT_MARKER}\n${taskPrompt}\n\nIMPORTANT: Keep working through your task list. Update each task as you complete it using the TaskTracker tool. If you've lost context, use TaskTracker with action "status" to review your plan.`
+  // 3. Scratchpad
+  const scratchpad = formatScratchpadForPrompt()
+  if (scratchpad) {
+    sections.push(scratchpad)
+  }
 
-  // Remove previous task context injection
+  // 4. Recovery instructions
+  sections.push(
+    '## Instructions\n' +
+    '- Work through your task list. Update each task as you complete it.\n' +
+    '- Write important findings to the Scratchpad so you never lose them.\n' +
+    '- If you feel confused or lost, read the Scratchpad and check TaskTracker status.\n' +
+    '- Stay focused on the Original Goal above.'
+  )
+
+  const content = `${PERSISTENT_CONTEXT_MARKER}\n${sections.join('\n\n')}`
+
+  // Remove previous persistent context injection
   for (let i = conversation.length - 1; i >= 1; i--) {
-    if (typeof conversation[i]!.content === 'string' && conversation[i]!.content!.startsWith(TASK_CONTEXT_MARKER)) {
+    if (typeof conversation[i]!.content === 'string' &&
+        conversation[i]!.content!.startsWith(PERSISTENT_CONTEXT_MARKER)) {
       conversation.splice(i, 1)
       break
     }
   }
 
-  // Insert task context as the second-to-last message (right before the model sees it)
-  // This ensures it's always fresh and near the end where the model attends most
+  // Insert at the end — this is the last thing the model sees
   conversation.push({ role: 'system', content })
 }
 

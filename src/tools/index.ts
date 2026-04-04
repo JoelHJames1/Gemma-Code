@@ -8,11 +8,12 @@ import { GlobTool } from './glob.js'
 import { GrepTool } from './grep.js'
 import { TaskTrackerTool } from './tasks.js'
 import { SpawnAgentTool } from './agents.js'
+import { ScratchpadTool } from './scratchpad.js'
 
 const TOOL_MAP: Map<string, ToolDefinition> = new Map()
 
 // Register all tools
-for (const tool of [ReadTool, WriteTool, EditTool, BashTool, GlobTool, GrepTool, TaskTrackerTool, SpawnAgentTool]) {
+for (const tool of [ReadTool, WriteTool, EditTool, BashTool, GlobTool, GrepTool, TaskTrackerTool, SpawnAgentTool, ScratchpadTool]) {
   TOOL_MAP.set(tool.spec.function.name, tool)
 }
 

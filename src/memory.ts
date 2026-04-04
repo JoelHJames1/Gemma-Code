@@ -121,31 +121,53 @@ function compactMessages(messages: Message[]): string {
   let filesEdited: string[] = []
   let commandsRun: string[] = []
   let userQuestions: string[] = []
+  let errors: string[] = []
+  let decisions: string[] = []
 
   for (const msg of messages) {
     const content = typeof msg.content === 'string' ? msg.content : ''
 
     if (msg.role === 'user' && content) {
-      // Capture the user's question/request
       const preview = content.slice(0, 150).replace(/\n/g, ' ')
-      userQuestions.push(preview)
+      if (!content.startsWith('[') && !content.startsWith('Based on')) {
+        userQuestions.push(preview)
+      }
     }
 
-    if (msg.role === 'assistant' && msg.tool_calls) {
-      for (const tc of msg.tool_calls) {
-        toolCalls++
-        try {
-          const args = JSON.parse(tc.function.arguments || '{}')
-          if (tc.function.name === 'Read' && args.file_path) {
-            filesRead.push(args.file_path)
-          } else if (tc.function.name === 'Edit' && args.file_path) {
-            filesEdited.push(args.file_path)
-          } else if (tc.function.name === 'Write' && args.file_path) {
-            filesEdited.push(args.file_path)
-          } else if (tc.function.name === 'Bash' && args.command) {
-            commandsRun.push(args.command.slice(0, 80))
-          }
-        } catch {}
+    if (msg.role === 'tool' && content) {
+      // Capture errors — these are critical to remember
+      if (content.startsWith('Error')) {
+        errors.push(content.slice(0, 120))
+      }
+    }
+
+    if (msg.role === 'assistant') {
+      // Capture tool calls
+      if (msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          toolCalls++
+          try {
+            const args = JSON.parse(tc.function.arguments || '{}')
+            if (tc.function.name === 'Read' && args.file_path) {
+              filesRead.push(args.file_path)
+            } else if (tc.function.name === 'Edit' && args.file_path) {
+              filesEdited.push(args.file_path)
+            } else if (tc.function.name === 'Write' && args.file_path) {
+              filesEdited.push(args.file_path)
+            } else if (tc.function.name === 'Bash' && args.command) {
+              commandsRun.push(args.command.slice(0, 80))
+            } else if (tc.function.name === 'Scratchpad') {
+              // Scratchpad writes are decisions — note them
+              if (args.action === 'write' || args.action === 'append') {
+                decisions.push('Wrote to scratchpad')
+              }
+            }
+          } catch {}
+        }
+      }
+      // Capture assistant text responses as decisions/conclusions
+      if (content && !msg.tool_calls && content.length > 20) {
+        decisions.push(content.slice(0, 200).replace(/\n/g, ' '))
       }
     }
   }
@@ -157,20 +179,24 @@ function compactMessages(messages: Message[]): string {
   if (userQuestions.length > 0) {
     parts.push(`User asked: ${userQuestions.join('; ')}`)
   }
+  if (decisions.length > 0) {
+    parts.push(`Key conclusions: ${decisions.slice(-3).join('; ')}`)
+  }
+  if (errors.length > 0) {
+    parts.push(`Errors encountered: ${errors.slice(-3).join('; ')}`)
+  }
   if (filesRead.length > 0) {
-    parts.push(`Files read: ${filesRead.slice(0, 10).join(', ')}`)
+    parts.push(`Files read: ${filesRead.slice(0, 8).join(', ')}`)
   }
   if (filesEdited.length > 0) {
     parts.push(`Files modified: ${filesEdited.join(', ')}`)
   }
   if (commandsRun.length > 0) {
-    parts.push(`Commands run: ${commandsRun.slice(0, 5).join('; ')}`)
+    parts.push(`Commands: ${commandsRun.slice(0, 4).join('; ')}`)
   }
-  if (toolCalls > 0) {
-    parts.push(`${toolCalls} tool calls total`)
-  }
+  parts.push(`${toolCalls} tool calls`)
 
-  return parts.join('. ') || 'Previous conversation context (details compacted).'
+  return parts.join('. ')
 }
 
 /**
