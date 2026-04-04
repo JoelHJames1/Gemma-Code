@@ -135,12 +135,58 @@ export interface SearchResult {
   metadata?: Record<string, unknown>
 }
 
+/** Metadata filter for scoped retrieval. */
+export interface SearchFilter {
+  /** Only include docs where metadata[key] === value */
+  eq?: Record<string, unknown>
+  /** Only include docs where metadata[key] is in the set */
+  in?: Record<string, unknown[]>
+  /** Only include docs where numeric metadata[key] >= value */
+  gte?: Record<string, number>
+  /** Only include docs where numeric metadata[key] <= value */
+  lte?: Record<string, number>
+}
+
 /**
- * Build a search index and query it.
+ * Apply metadata filters to documents BEFORE vector scoring.
+ * Pre-filtering prevents recall cliffs from post-filter approaches.
+ */
+function applyFilters(docs: SearchDocument[], filter?: SearchFilter): SearchDocument[] {
+  if (!filter) return docs
+  return docs.filter(doc => {
+    const meta = doc.metadata || {}
+    if (filter.eq) {
+      for (const [k, v] of Object.entries(filter.eq)) {
+        if (meta[k] !== v) return false
+      }
+    }
+    if (filter.in) {
+      for (const [k, vals] of Object.entries(filter.in)) {
+        if (!vals.includes(meta[k])) return false
+      }
+    }
+    if (filter.gte) {
+      for (const [k, v] of Object.entries(filter.gte)) {
+        if (typeof meta[k] !== 'number' || (meta[k] as number) < v) return false
+      }
+    }
+    if (filter.lte) {
+      for (const [k, v] of Object.entries(filter.lte)) {
+        if (typeof meta[k] !== 'number' || (meta[k] as number) > v) return false
+      }
+    }
+    return true
+  })
+}
+
+/**
+ * Build a search index and query it with optional metadata filtering.
  *
  * Usage:
  *   const results = search(documents, "auth token validation", 5)
+ *   const results = search(documents, "auth", 5, 0.05, { eq: { project: "myapp" } })
  *
+ * Pre-filters by metadata BEFORE vector scoring to avoid recall cliffs.
  * Returns the top-k most relevant documents sorted by cosine similarity.
  */
 export function search(
@@ -148,29 +194,27 @@ export function search(
   query: string,
   topK = 5,
   minScore = 0.05,
+  filter?: SearchFilter,
 ): SearchResult[] {
-  if (documents.length === 0) return []
+  // Pre-filter by metadata before scoring (prevents recall cliffs)
+  const filtered = applyFilters(documents, filter)
+  if (filtered.length === 0) return []
 
-  // Tokenize all documents + query
-  const docTokens = documents.map(d => tokenize(d.text))
+  const docTokens = filtered.map(d => tokenize(d.text))
   const queryTokens = tokenize(query)
 
   if (queryTokens.length === 0) return []
 
-  // Compute TF for each document and the query
   const docTFs = docTokens.map(tokens => termFrequency(tokens))
   const queryTF = termFrequency(queryTokens)
 
-  // Compute IDF across all documents + query
   const allDocs = [...docTFs, queryTF]
   const idf = inverseDocumentFrequency(allDocs)
 
-  // Compute TF-IDF vectors
   const docVectors = docTFs.map(tf => tfidfVector(tf, idf))
   const queryVector = tfidfVector(queryTF, idf)
 
-  // Rank by cosine similarity
-  const scored: SearchResult[] = documents.map((doc, i) => ({
+  const scored: SearchResult[] = filtered.map((doc, i) => ({
     id: doc.id,
     score: cosineSimilarity(queryVector, docVectors[i]!),
     text: doc.text,
@@ -181,6 +225,64 @@ export function search(
     .filter(r => r.score >= minScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK)
+}
+
+// ── Retrieval Cache ──────────────────────────────────────────────────────
+
+/**
+ * LRU cache for search results.
+ * Avoids recomputing TF-IDF on identical queries within the same session.
+ * Cache key = query + filter hash. TTL = 30 seconds.
+ */
+const CACHE_TTL = 30_000
+const CACHE_MAX = 20
+
+interface CacheEntry {
+  results: SearchResult[]
+  timestamp: number
+}
+
+const searchCache = new Map<string, CacheEntry>()
+
+function cacheKey(query: string, filter?: SearchFilter): string {
+  return `${query}::${filter ? JSON.stringify(filter) : ''}`
+}
+
+/**
+ * Cached search — returns cached results if available and fresh,
+ * otherwise runs search and caches the results.
+ */
+export function cachedSearch(
+  documents: SearchDocument[],
+  query: string,
+  topK = 5,
+  minScore = 0.05,
+  filter?: SearchFilter,
+): SearchResult[] {
+  const key = cacheKey(query, filter)
+  const cached = searchCache.get(key)
+
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.results
+  }
+
+  const results = search(documents, query, topK, minScore, filter)
+
+  // Evict oldest if cache is full
+  if (searchCache.size >= CACHE_MAX) {
+    const oldest = [...searchCache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)[0]
+    if (oldest) searchCache.delete(oldest[0])
+  }
+
+  searchCache.set(key, { results, timestamp: Date.now() })
+  return results
+}
+
+/**
+ * Clear the search cache (call when memory store changes).
+ */
+export function clearSearchCache(): void {
+  searchCache.clear()
 }
 
 /**

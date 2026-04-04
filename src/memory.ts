@@ -21,7 +21,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import type { Message } from './api.js'
 import { estimateMessageTokens, estimateConversationTokens, getTokenBudget } from './context-window.js'
-import { search, type SearchDocument } from './vectorsearch.js'
+import { cachedSearch, clearSearchCache, type SearchDocument, type SearchFilter } from './vectorsearch.js'
 import { logEvent } from './eventlog.js'
 import { segmentAndStore } from './episodes.js'
 
@@ -89,6 +89,7 @@ export function addMemory(summary: string, project?: string): string {
     store.entries = [...active.slice(-80), ...superseded.slice(-20)]
   }
   saveMemory(store)
+  clearSearchCache()  // Invalidate cached search results
   return id
 }
 
@@ -145,10 +146,18 @@ export function getRelevantMemories(
     const docs: SearchDocument[] = activeEntries.map(({ entry, idx }) => ({
       id: idx,
       text: `${entry.summary} ${entry.project || ''}`,
-      metadata: { timestamp: entry.timestamp, project: entry.project },
+      metadata: {
+        timestamp: entry.timestamp,
+        project: entry.project,
+        ts: new Date(entry.timestamp).getTime(),  // Numeric for range queries
+      },
     }))
 
-    const results = search(docs, query, 10, 0.05)
+    // Metadata-filtered search: scope by project if available
+    const filter: SearchFilter | undefined = project
+      ? { eq: { project } }
+      : undefined
+    const results = cachedSearch(docs, query, 10, 0.05, filter)
 
     // Merge: top vector results + most recent 3 (for recency)
     const vectorIds = new Set(results.map(r => r.id as number))
@@ -201,7 +210,7 @@ export function searchMemories(
     text: `${entry.summary} ${entry.project || ''}`,
   }))
 
-  const results = search(docs, query, topK, 0.03)
+  const results = cachedSearch(docs, query, topK, 0.03)
 
   return results.map(r => {
     const entry = store.entries[r.id as number]!

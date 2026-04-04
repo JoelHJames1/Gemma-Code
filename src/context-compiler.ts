@@ -24,6 +24,7 @@ import { formatTaskListForPrompt, getTaskList, loadPersistedTasks } from './task
 import { formatScratchpadForPrompt } from './scratchpad.js'
 import { searchMemories } from './memory.js'
 import { searchEpisodes, formatEpisodesForContext } from './episodes.js'
+import { compressForContext } from './compression.js'
 
 const CHARS_PER_TOKEN = 4
 
@@ -128,7 +129,10 @@ export function compileContext(
     // Finds relevant episodes and pulls temporal neighbors for causal context
     const episodes = searchEpisodes(currentQuery, 4, 1)
     if (episodes.length > 0) {
-      const epText = formatEpisodesForContext(episodes, Math.floor(memBudget * CHARS_PER_TOKEN * 0.6))
+      const epBudget = Math.floor(memBudget * 0.6)
+      let epText = formatEpisodesForContext(episodes, epBudget * CHARS_PER_TOKEN)
+      // RECOMP-style compression: extract only query-relevant spans
+      epText = compressForContext(epText, currentQuery, epBudget)
       memText += epText
       memTokens += estimateTokens(epText)
     }
@@ -138,16 +142,14 @@ export function compileContext(
     if (remainingBudget > 50) {
       const results = searchMemories(currentQuery, 5)
       if (results.length > 0) {
-        memText += '## Relevant facts\n'
-        memTokens += estimateTokens('## Relevant facts\n')
-
+        let factsText = '## Relevant facts\n'
         for (const r of results) {
-          const line = `- [${r.timestamp.split('T')[0]}] ${r.summary}\n`
-          const lineTokens = estimateTokens(line)
-          if (memTokens + lineTokens > memBudget) break
-          memText += line
-          memTokens += lineTokens
+          factsText += `- [${r.timestamp.split('T')[0]}] ${r.summary}\n`
         }
+        // Compress facts to fit remaining budget
+        factsText = compressForContext(factsText, currentQuery, remainingBudget)
+        memText += factsText
+        memTokens += estimateTokens(factsText)
       }
     }
 
