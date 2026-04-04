@@ -38,6 +38,8 @@ export interface AgentOptions {
   stream?: boolean
   config: ServerConfig
   abortSignal?: AbortSignal
+  /** Check for queued user messages between tool rounds. */
+  getQueuedMessage?: () => string | null
   onText?: (text: string) => void
   onToolStart?: (name: string, args: Record<string, unknown>) => void
   onToolEnd?: (name: string, result: string) => void
@@ -73,6 +75,7 @@ export async function runAgent(
     stream = true,
     config,
     abortSignal,
+    getQueuedMessage,
     onText,
     onToolStart,
     onToolEnd,
@@ -101,10 +104,31 @@ export async function runAgent(
     smartCompact(conversation, config.model)
     pruneIfNeeded(conversation, config.model)
 
-    // Check if aborted before each round
+    // Check if aborted (Ctrl+C or "stop")
     if (abortSignal?.aborted) {
-      conversation.push({ role: 'assistant', content: '(Interrupted by user)' })
-      return '(Interrupted)'
+      conversation.push({ role: 'assistant', content: '(Stopped by user)' })
+      return '(Stopped)'
+    }
+
+    // Check for queued user messages — inject them into the conversation
+    // so the model sees them on the next turn (user can redirect mid-work)
+    if (getQueuedMessage) {
+      const queued = getQueuedMessage()
+      if (queued) {
+        // Check if user wants to stop
+        const lower = queued.toLowerCase().trim()
+        if (lower === 'stop' || lower === 'cancel' || lower === 'abort') {
+          conversation.push({ role: 'user', content: queued })
+          conversation.push({ role: 'assistant', content: '(Stopped by user)' })
+          return '(Stopped)'
+        }
+        // Otherwise inject the message — model will see it and can respond
+        conversation.push({
+          role: 'user',
+          content: `[Interjection while you were working]: ${queued}`,
+        })
+        logEvent('user_message', 'user', { content: queued, interjection: true })
+      }
     }
 
     // CONTEXT COMPILER: build the optimal prompt from the token budget

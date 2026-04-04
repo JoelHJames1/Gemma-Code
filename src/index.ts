@@ -328,6 +328,7 @@ async function interactiveMode(serverConfig: ServerConfig) {
   let currentAbort: AbortController | null = null
   let isProcessing = false
   let pendingInput: string | null = null
+  let queuedMessage: string | null = null
 
   rl.on('line', async (line) => {
     const input = (inputBuffer + line).trim()
@@ -355,11 +356,20 @@ async function interactiveMode(serverConfig: ServerConfig) {
       }
     }
 
-    // If already processing, queue the new input and abort the current request
+    // If already processing, queue the message for the agent to see between tool rounds
     if (isProcessing) {
-      process.stderr.write(DIM('\n  ↩ Interrupting current request...\n'))
-      currentAbort?.abort()
-      pendingInput = input
+      const lower = input.toLowerCase().trim()
+      if (lower === 'stop' || lower === 'cancel' || lower === 'abort') {
+        // Explicit stop command — abort the request
+        process.stderr.write(DIM('\n  ⏹ Stopping current request...\n'))
+        currentAbort?.abort()
+        pendingInput = null
+        queuedMessage = null
+      } else {
+        // Queue the message — agent will see it between tool rounds
+        queuedMessage = input
+        process.stderr.write(DIM(`\n  💬 Message queued (agent will see it next round)\n`))
+      }
       return
     }
 
@@ -391,6 +401,12 @@ async function interactiveMode(serverConfig: ServerConfig) {
         stream: true,
         config: serverConfig,
         abortSignal: currentAbort.signal,
+        getQueuedMessage: () => {
+          // Agent calls this between tool rounds to check for user messages
+          const msg = queuedMessage
+          queuedMessage = null
+          return msg
+        },
         onText: (text: string) => {
           if (currentAbort?.signal.aborted) return
           if (firstChunk) { spin.stop(); firstChunk = false }
@@ -449,10 +465,11 @@ async function interactiveMode(serverConfig: ServerConfig) {
     }
     lastSigint = now
 
-    // If processing, abort the current request
+    // If processing, Ctrl+C stops the current work
     if (isProcessing && currentAbort) {
       currentAbort.abort()
-      process.stderr.write(DIM('\n  (interrupted — type new message or Ctrl+C again to exit)\n'))
+      queuedMessage = null
+      process.stderr.write(DIM('\n  ⏹ Stopped. Type your next message or Ctrl+C again to exit.\n'))
     } else {
       process.stderr.write(DIM('\n  (Press Ctrl+C again to exit)\n'))
     }
@@ -466,7 +483,7 @@ async function interactiveMode(serverConfig: ServerConfig) {
       process.exit(0)
     }
     lastSigint = now
-    if (isProcessing && currentAbort) currentAbort.abort()
+    if (isProcessing && currentAbort) { currentAbort.abort(); queuedMessage = null }
   })
 }
 
