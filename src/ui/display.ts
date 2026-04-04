@@ -16,20 +16,19 @@ const QWEN_YELLOW = chalk.hex('#FFD700')
 export function banner(): string {
   const r = chalk.hex('#EE1111')             // red ghost body
   const w = chalk.hex('#FFFFFF')             // white eyes
-  const b = chalk.hex('#2222BB')             // blue pupils
+  const b = chalk.hex('#2222CC')             // blue pupils
 
   return `
-    ${r('      ▄██████▄')}
-    ${r('    ████████████')}
+    ${r('     ▄████████▄')}
     ${r('   ██████████████')}
-    ${r('   ██')}${w('███')}${r('████')}${w('███')}${r('██')}
-    ${r('   ██')}${w('███')}${r('████')}${w('███')}${r('██')}       ${BOLD('Qwen Code')} ${DIM('v1.0.0')}
-    ${r('   ██')}${w('█')}${b('██')}${r('████')}${w('█')}${b('██')}${r('██')}       ${DIM('Local-first agentic coding CLI')}
-    ${r('   ██████████████')}       ${DIM('Powered by Ollama qwen3.5:9b')}
-    ${r('   ██████████████')}
-    ${r('   ██████████████')}
-    ${r('   ██████████████')}
-    ${r('   ██▀▀██▀▀██▀▀██')}
+    ${r('  ████████████████')}
+    ${r('  ████')}${w('███')}${r('████')}${w('███')}${r('███')}
+    ${r('  ████')}${w('█')}${b('██')}${r('████')}${w('█')}${b('██')}${r('███')}    ${BOLD('Qwen Code')} ${DIM('v1.0.0')}
+    ${r('  ████████████████')}    ${DIM('Local-first agentic coding CLI')}
+    ${r('  ████████████████')}    ${DIM('Powered by Ollama qwen3.5:9b')}
+    ${r('  ████████████████')}
+    ${r('  ████████████████')}
+    ${r('  ███▀▀████▀▀████')}
 `
 }
 
