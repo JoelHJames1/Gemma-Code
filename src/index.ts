@@ -40,6 +40,7 @@ import { getBeliefStats, searchBeliefs } from './knowledge/beliefs.js'
 import { getCuriosityStats, getOpenQuestions } from './growth/curiosity.js'
 import { startDaemon, stopDaemon, markBusy, markIdle, getDaemonStats } from './existence/daemon.js'
 import { deepenRelationship } from './emotional/relationships.js'
+import { connectWhatsApp, disconnectWhatsApp, isWhatsAppConnected, getWhatsAppStatus } from './channels/whatsapp.js'
 import { scoreSessionSignificance, classifyExperience } from './emotional/significance.js'
 import { getSkillStats, getAllSkills } from './growth/skills.js'
 import { getGoalStats, getActiveGoals } from './growth/goals.js'
@@ -360,7 +361,7 @@ async function interactiveMode(serverConfig: ServerConfig) {
         '/tasks', '/tasks-clear', '/agents', '/agents-clear', '/scratchpad',
         '/checkpoint', '/resume', '/episodes', '/budget', '/eventlog',
         '/identity', '/memories', '/knowledge', '/beliefs',
-        '/skills', '/goals', '/curiosity', '/security',
+        '/skills', '/goals', '/curiosity', '/whatsapp', '/security',
         '/config', '/refresh', '/history', '/tokens', '/help', '/model'])
       if (knownCommands.has(cmd)) {
         // If processing, abort current work for /clear, /exit etc
@@ -471,6 +472,7 @@ async function interactiveMode(serverConfig: ServerConfig) {
 
   rl.on('close', () => {
     stopDaemon()
+    disconnectWhatsApp()
 
     // Emotional processing: score this session's significance
     const significance = scoreSessionSignificance(conversation)
@@ -777,6 +779,27 @@ function handleCommand(
       break
     }
 
+    case '/whatsapp': {
+      const status = getWhatsAppStatus()
+      if (status.connected) {
+        infoMsg(`WhatsApp: connected as ${status.phone}`)
+        infoMsg(`Active chats: ${status.activeChats}`)
+      } else {
+        infoMsg('Connecting to WhatsApp...')
+        infoMsg('Scan the QR code with your phone when it appears')
+        connectWhatsApp(serverConfig, (msg) => {
+          infoMsg(msg)
+        }).then((connected) => {
+          if (connected) {
+            infoMsg('WhatsApp connected! People can now message you or tag @gemma in groups.')
+          }
+        }).catch((err) => {
+          errorMsg(`WhatsApp error: ${err.message}`)
+        })
+      }
+      break
+    }
+
     case '/security': {
       const profile = getActiveProfile()
       infoMsg(`Security profile: ${profile.name}`)
@@ -832,6 +855,7 @@ function handleCommand(
       infoMsg('  /episodes [query]         Show/search episodic memory')
       infoMsg('  /budget                   Show context budget allocation')
       infoMsg('  /eventlog [recent]        Show event log stats')
+      infoMsg('  /whatsapp                 Connect to WhatsApp (scan QR)')
       infoMsg('  /security                 Show security policy')
       infoMsg('  /tokens                   Show context window usage')
       infoMsg('  /config                   Show configuration')
