@@ -318,6 +318,9 @@ async function interactiveMode(serverConfig: ServerConfig) {
   rl.prompt()
 
   let inputBuffer = ''
+  let currentAbort: AbortController | null = null
+  let isProcessing = false
+  let pendingInput: string | null = null
 
   rl.on('line', async (line) => {
     const input = (inputBuffer + line).trim()
@@ -336,13 +339,42 @@ async function interactiveMode(serverConfig: ServerConfig) {
         '/checkpoint', '/resume', '/episodes', '/budget', '/eventlog',
         '/config', '/refresh', '/history', '/tokens', '/help', '/model'])
       if (knownCommands.has(cmd)) {
+        // If processing, abort current work for /clear, /exit etc
+        if (isProcessing && (cmd === '/clear' || cmd === '/exit' || cmd === '/quit' || cmd === '/q')) {
+          currentAbort?.abort()
+        }
         handleCommand(input, conversation, rl, serverConfig)
         return
       }
-      // Not a command — treat as regular input (likely a file path)
     }
 
-    rl.pause()
+    // If already processing, queue the new input and abort the current request
+    if (isProcessing) {
+      process.stderr.write(DIM('\n  ↩ Interrupting current request...\n'))
+      currentAbort?.abort()
+      pendingInput = input
+      return
+    }
+
+    await processInput(input, conversation, rl, serverConfig)
+
+    // Process any queued input that came in during the last request
+    while (pendingInput) {
+      const next = pendingInput
+      pendingInput = null
+      process.stderr.write('\n')
+      await processInput(next, conversation, rl, serverConfig)
+    }
+  })
+
+  async function processInput(
+    input: string,
+    conversation: ReturnType<typeof createConversation>,
+    rl: ReturnType<typeof createInterface>,
+    serverConfig: ServerConfig,
+  ) {
+    isProcessing = true
+    currentAbort = new AbortController()
 
     try {
       const spin = spinner()
@@ -351,15 +383,19 @@ async function interactiveMode(serverConfig: ServerConfig) {
       const agentOpts = {
         stream: true,
         config: serverConfig,
+        abortSignal: currentAbort.signal,
         onText: (text: string) => {
+          if (currentAbort?.signal.aborted) return
           if (firstChunk) { spin.stop(); firstChunk = false }
           process.stdout.write(text)
         },
         onToolStart: (name: string, args: Record<string, unknown>) => {
+          if (currentAbort?.signal.aborted) return
           if (firstChunk) { spin.stop(); firstChunk = false }
           toolCallHeader(name, args)
         },
         onToolEnd: (name: string, result: string) => {
+          if (currentAbort?.signal.aborted) return
           toolCallResult(name, result)
         },
       }
@@ -373,14 +409,22 @@ async function interactiveMode(serverConfig: ServerConfig) {
         await runAgent(conversation, input, agentOpts)
       }
 
-      process.stdout.write('\n\n')
+      if (!currentAbort.signal.aborted) {
+        process.stdout.write('\n\n')
+      }
     } catch (e: any) {
-      errorMsg(e.message || 'Something went wrong')
+      if (e.name === 'AbortError' || currentAbort?.signal.aborted) {
+        spin?.stop?.()
+        process.stderr.write(DIM('\n  (interrupted)\n'))
+      } else {
+        errorMsg(e.message || 'Something went wrong')
+      }
     }
 
-    rl.resume()
+    isProcessing = false
+    currentAbort = null
     rl.prompt()
-  })
+  }
 
   rl.on('close', () => {
     process.stderr.write(DIM('\nGoodbye!\n'))
@@ -397,7 +441,14 @@ async function interactiveMode(serverConfig: ServerConfig) {
       process.exit(0)
     }
     lastSigint = now
-    process.stderr.write(DIM('\n  (Press Ctrl+C again to exit)\n'))
+
+    // If processing, abort the current request
+    if (isProcessing && currentAbort) {
+      currentAbort.abort()
+      process.stderr.write(DIM('\n  (interrupted — type new message or Ctrl+C again to exit)\n'))
+    } else {
+      process.stderr.write(DIM('\n  (Press Ctrl+C again to exit)\n'))
+    }
     rl.prompt()
   })
 
@@ -408,6 +459,7 @@ async function interactiveMode(serverConfig: ServerConfig) {
       process.exit(0)
     }
     lastSigint = now
+    if (isProcessing && currentAbort) currentAbort.abort()
   })
 }
 
@@ -438,89 +490,19 @@ function handleCommand(
         infoMsg('Example: /vision screenshot.png What does this UI show?')
         break
       }
-      // Parse: first arg is image path, rest is prompt
-      const parts = arg.split(/\s+/)
-      const imgPath = parts[0]!
-      const prompt = parts.slice(1).join(' ') || 'Describe this image in detail.'
-
-      if (!existsSync(imgPath)) {
-        errorMsg(`Image not found: ${imgPath}`)
-        break
-      }
-
-      // Process vision request asynchronously
-      rl.pause()
-      ;(async () => {
-        try {
-          const spin = spinner()
-          let firstChunk = true
-          infoMsg(`📷 Attaching image: ${imgPath}`)
-
-          await runAgentWithImage(conversation, prompt, imgPath, {
-            stream: true,
-            config: serverConfig,
-            onText: (text: string) => {
-              if (firstChunk) { spin.stop(); firstChunk = false }
-              process.stdout.write(text)
-            },
-            onToolStart: (name: string, args: Record<string, unknown>) => {
-              if (firstChunk) { spin.stop(); firstChunk = false }
-              toolCallHeader(name, args)
-            },
-            onToolEnd: (name: string, result: string) => {
-              toolCallResult(name, result)
-            },
-          })
-
-          process.stdout.write('\n\n')
-        } catch (e: any) {
-          errorMsg(e.message || 'Vision request failed')
-        }
-        rl.resume()
-        rl.prompt()
-      })()
-      return  // Don't call rl.prompt() here — the async block handles it
+      // Treat as regular input — image detection handles the rest
+      processInput(arg, conversation, rl, serverConfig)
+      return
     }
 
     case '/paste': {
-      // Grab image from clipboard and send with prompt
-      const prompt = arg || 'Describe this image in detail.'
+      const pastePrompt = arg || 'Describe this image in detail.'
       const clipImg = getClipboardImage()
       if (!clipImg) {
         errorMsg('No image found in clipboard. Copy an image first (Cmd+C on a screenshot, etc.)')
         break
       }
-
-      rl.pause()
-      ;(async () => {
-        try {
-          const spin = spinner()
-          let firstChunk = true
-          infoMsg(`📷 Image from clipboard: ${clipImg}`)
-
-          await runAgentWithImage(conversation, prompt, clipImg, {
-            stream: true,
-            config: serverConfig,
-            onText: (text: string) => {
-              if (firstChunk) { spin.stop(); firstChunk = false }
-              process.stdout.write(text)
-            },
-            onToolStart: (name: string, args: Record<string, unknown>) => {
-              if (firstChunk) { spin.stop(); firstChunk = false }
-              toolCallHeader(name, args)
-            },
-            onToolEnd: (name: string, result: string) => {
-              toolCallResult(name, result)
-            },
-          })
-
-          process.stdout.write('\n\n')
-        } catch (e: any) {
-          errorMsg(e.message || 'Vision request failed')
-        }
-        rl.resume()
-        rl.prompt()
-      })()
+      processInput(`${clipImg} ${pastePrompt}`, conversation, rl, serverConfig)
       return
     }
 

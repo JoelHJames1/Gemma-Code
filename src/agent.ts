@@ -36,6 +36,7 @@ const MAX_TOOL_ROUNDS = 30 // Safety limit on consecutive tool-call rounds
 export interface AgentOptions {
   stream?: boolean
   config: ServerConfig
+  abortSignal?: AbortSignal
   onText?: (text: string) => void
   onToolStart?: (name: string, args: Record<string, unknown>) => void
   onToolEnd?: (name: string, result: string) => void
@@ -70,10 +71,14 @@ export async function runAgent(
   const {
     stream = true,
     config,
+    abortSignal,
     onText,
     onToolStart,
     onToolEnd,
   } = options
+
+  // Attach abort signal to config so chatCompletion can use it
+  const configWithAbort = abortSignal ? { ...config, abortSignal } : config
 
   // Log the user message
   logEvent('user_message', 'user', { content: userMessage })
@@ -95,8 +100,13 @@ export async function runAgent(
     smartCompact(conversation, config.model)
     pruneIfNeeded(conversation, config.model)
 
+    // Check if aborted before each round
+    if (abortSignal?.aborted) {
+      conversation.push({ role: 'assistant', content: '(Interrupted by user)' })
+      return '(Interrupted)'
+    }
+
     // CONTEXT COMPILER: build the optimal prompt from the token budget
-    // This replaces ad-hoc injection with proper budget allocation
     const compiledContext = compileContext(
       conversation,
       config.model,
@@ -112,7 +122,7 @@ export async function runAgent(
     // Call the model with the COMPILED context (not raw conversation)
     let msg: Message
     try {
-      msg = await chatCompletion(compiledContext, tools, config)
+      msg = await chatCompletion(compiledContext, tools, configWithAbort)
     } catch (err) {
       const kind = classifyOllamaError(err)
 

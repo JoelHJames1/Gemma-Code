@@ -50,6 +50,7 @@ export interface ServerConfig {
   baseUrl: string
   model: string
   requestTimeoutMs?: number
+  abortSignal?: AbortSignal
 }
 
 /**
@@ -73,11 +74,17 @@ export async function chatCompletion(
   const timeoutMs = config.requestTimeoutMs || 120_000
 
   return retryWithBackoff(async () => {
+    // Combine abort signal (user cancellation) with timeout
+    const timeoutSignal = AbortSignal.timeout(timeoutMs)
+    const signal = config.abortSignal
+      ? AbortSignal.any([config.abortSignal, timeoutSignal])
+      : timeoutSignal
+
     const res = await fetch(`${config.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
     })
 
     if (!res.ok) {
