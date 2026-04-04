@@ -159,19 +159,55 @@ function getClipboardImage(): string | null {
 
 /**
  * Extract image paths from user input.
- * Checks: explicit file paths in the message → clipboard image.
+ * Handles: normal paths, paths with spaces (backslash-escaped or quoted),
+ * and paths where the image extension identifies the end of the path.
  */
 function extractImagePath(input: string): { imagePath: string | null; text: string } {
-  // Check each word for image file paths
-  const words = input.split(/\s+/)
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i]!
-    const ext = '.' + word.split('.').pop()?.toLowerCase()
-    if (IMAGE_EXTENSIONS.has(ext) && existsSync(word)) {
-      const text = words.filter((_, idx) => idx !== i).join(' ').trim()
-      return { imagePath: word, text: text || 'Describe this image.' }
+  // Strategy 1: Find image extension in the input and work backwards to find the path start
+  for (const ext of IMAGE_EXTENSIONS) {
+    const extIdx = input.toLowerCase().indexOf(ext)
+    if (extIdx === -1) continue
+
+    const pathEnd = extIdx + ext.length
+
+    // Work backwards from the extension to find the path start
+    // A path starts after a space that isn't backslash-escaped, or at the beginning
+    let pathStart = 0
+    for (let i = extIdx - 1; i >= 0; i--) {
+      const ch = input[i]
+      if (ch === ' ' && (i === 0 || input[i - 1] !== '\\')) {
+        pathStart = i + 1
+        break
+      }
+      if (ch === '"' || ch === "'") {
+        pathStart = i + 1
+        break
+      }
+    }
+
+    let candidate = input.slice(pathStart, pathEnd)
+
+    // Remove surrounding quotes if present
+    if ((candidate.startsWith('"') && candidate.endsWith('"')) ||
+        (candidate.startsWith("'") && candidate.endsWith("'"))) {
+      candidate = candidate.slice(1, -1)
+    }
+
+    // Unescape backslash-spaces: Joel\ Lambo.jpg → Joel Lambo.jpg
+    const unescaped = candidate.replace(/\\ /g, ' ')
+
+    if (existsSync(unescaped)) {
+      const text = (input.slice(0, pathStart) + input.slice(pathEnd)).trim()
+      return { imagePath: unescaped, text: text || 'Describe this image.' }
+    }
+
+    // Also try the raw candidate (no unescaping needed if path has no spaces)
+    if (existsSync(candidate)) {
+      const text = (input.slice(0, pathStart) + input.slice(pathEnd)).trim()
+      return { imagePath: candidate, text: text || 'Describe this image.' }
     }
   }
+
   return { imagePath: null, text: input }
 }
 
