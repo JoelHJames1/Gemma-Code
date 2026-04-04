@@ -13,7 +13,9 @@
 
 import {
   chatCompletion,
+  createVisionMessage,
   type Message,
+  type MessageContent,
   type ServerConfig,
 } from './api.js'
 import { resolveConfig } from './config.js'
@@ -21,6 +23,7 @@ import { getToolSpecs, getTool, validateToolArgs } from './tools/index.js'
 import { buildSystemPrompt, getEnvContext } from './context.js'
 import { classifyOllamaError, errorKindMessage } from './errors.js'
 import { pruneIfNeeded, estimateConversationTokens, getTokenBudget } from './context-window.js'
+import { smartCompact } from './memory.js'
 
 const MAX_TOOL_ROUNDS = 30 // Safety limit on consecutive tool-call rounds
 
@@ -69,7 +72,7 @@ export async function runAgent(
   // Refresh system prompt with current env state (git branch, etc.)
   refreshSystemPrompt(conversation)
 
-  // Add user message
+  // Add user message (text or multimodal)
   conversation.push({ role: 'user', content: userMessage })
 
   const tools = getToolSpecs()
@@ -81,7 +84,9 @@ export async function runAgent(
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++
 
-    // Prune conversation if approaching context window limits
+    // Smart compaction: summarize old messages when context fills up
+    smartCompact(conversation, config.model)
+    // Fallback: hard prune if still over budget
     pruneIfNeeded(conversation, config.model)
 
     // Call the model with error classification and retry
@@ -168,6 +173,76 @@ export async function runAgent(
 
     conversation.push({ role: 'assistant', content: text })
     return text
+  }
+
+  return '(Agent reached maximum tool call rounds. Stopping.)'
+}
+
+/**
+ * Run the agent loop with an image attachment (vision).
+ * The image is sent as a multimodal content block alongside the text prompt.
+ */
+export async function runAgentWithImage(
+  conversation: Message[],
+  text: string,
+  imagePath: string,
+  options: AgentOptions,
+): Promise<string> {
+  refreshSystemPrompt(conversation)
+
+  // Build multimodal message
+  const visionMsg = createVisionMessage(text, imagePath)
+  conversation.push(visionMsg)
+
+  const {
+    stream = true,
+    config,
+    onText,
+    onToolStart,
+    onToolEnd,
+  } = options
+
+  const tools = getToolSpecs()
+  let rounds = 0
+  let emptyRetries = 0
+
+  while (rounds < MAX_TOOL_ROUNDS) {
+    rounds++
+    pruneIfNeeded(conversation, config.model)
+
+    let msg: Message
+    try {
+      msg = await chatCompletion(conversation, tools, config)
+    } catch (err) {
+      const kind = classifyOllamaError(err)
+      throw new Error(errorKindMessage(kind, (err as Error).message || String(err)))
+    }
+
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      conversation.push(msg)
+      for (const tc of msg.tool_calls) {
+        await executeToolCall(conversation, tc, onToolStart, onToolEnd)
+      }
+      continue
+    }
+
+    if (!msg.content?.trim() && rounds > 1) {
+      conversation.push({ role: 'user', content: 'Based on the image and tool results, please provide your answer now.' })
+      emptyRetries++
+      if (emptyRetries > 2) return '(The model did not produce a response.)'
+      continue
+    }
+
+    const responseText = (typeof msg.content === 'string' ? msg.content : '') || ''
+    if (stream && responseText) {
+      const words = responseText.split(' ')
+      for (let w = 0; w < words.length; w++) {
+        onText?.((w > 0 ? ' ' : '') + words[w]!)
+      }
+    }
+
+    conversation.push({ role: 'assistant', content: responseText })
+    return responseText
   }
 
   return '(Agent reached maximum tool call rounds. Stopping.)'

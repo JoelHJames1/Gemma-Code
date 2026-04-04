@@ -8,11 +8,9 @@ import { join } from 'path'
 import { homedir } from 'os'
 
 export interface GemmaConfig {
-  /** Backend: 'llama' (default) or 'ollama' */
-  backend: 'llama' | 'ollama'
-  /** Model name (for Ollama) or display name */
+  /** Model display name */
   model: string
-  /** Base URL for the API (auto-set when using llama backend) */
+  /** Base URL for llama-server API (auto-set) */
   baseUrl: string
   /** Override auto-detected context window */
   contextWindow?: number
@@ -43,7 +41,6 @@ export interface GemmaConfig {
 }
 
 const DEFAULTS: GemmaConfig = {
-  backend: 'llama',
   model: 'gemma4:31b',
   baseUrl: 'http://127.0.0.1:8776',
   maxToolRounds: 30,
@@ -86,14 +83,9 @@ export function resolveConfig(overrides: Partial<GemmaConfig> = {}): GemmaConfig
   const file = loadConfigFile()
   const env: Partial<GemmaConfig> = {}
 
-  if (process.env.GEMMA_BACKEND) env.backend = process.env.GEMMA_BACKEND as 'llama' | 'ollama'
   if (process.env.GEMMA_MODEL_PATH) env.modelPath = process.env.GEMMA_MODEL_PATH
   if (process.env.GEMMA_HF_REPO) env.hfRepo = process.env.GEMMA_HF_REPO
   if (process.env.GEMMA_GPU_LAYERS) env.gpuLayers = parseInt(process.env.GEMMA_GPU_LAYERS, 10)
-  // Legacy Ollama env vars still supported for ollama backend
-  if (process.env.OLLAMA_BASE_URL) env.baseUrl = process.env.OLLAMA_BASE_URL
-  if (process.env.OLLAMA_MODEL) env.model = process.env.OLLAMA_MODEL
-
   const resolved = {
     ...DEFAULTS,
     ...file,
@@ -101,13 +93,9 @@ export function resolveConfig(overrides: Partial<GemmaConfig> = {}): GemmaConfig
     ...overrides,
   }
 
-  // Auto-set baseUrl for llama backend
-  if (resolved.backend === 'llama' && !overrides.baseUrl && !file.baseUrl && !env.baseUrl) {
+  // Auto-set baseUrl based on port
+  if (!overrides.baseUrl && !file.baseUrl && !env.baseUrl) {
     resolved.baseUrl = `http://127.0.0.1:${resolved.llamaPort}`
-  }
-  // Auto-set baseUrl for ollama backend
-  if (resolved.backend === 'ollama' && !overrides.baseUrl && !file.baseUrl && !env.baseUrl) {
-    resolved.baseUrl = 'http://localhost:11434'
   }
 
   return resolved
@@ -129,7 +117,6 @@ export function saveConfig(config: Partial<GemmaConfig>): void {
  */
 export function formatConfig(config: GemmaConfig): string {
   const lines: string[] = []
-  lines.push(`  backend: ${config.backend}`)
   lines.push(`  model: ${config.model}`)
   lines.push(`  baseUrl: ${config.baseUrl}`)
   if (config.modelPath) lines.push(`  modelPath: ${config.modelPath}`)

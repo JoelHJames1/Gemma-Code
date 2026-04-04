@@ -5,7 +5,7 @@
  * When you type `gemma`, this CLI:
  * 1. Launches llama-server (llama.cpp) as the inference backend
  * 2. Waits for it to be ready
- * 3. Starts an interactive REPL with agentic tool calling
+ * 3. Starts an interactive REPL with agentic tool calling + vision
  * 4. Stops llama-server on exit
  *
  * Usage:
@@ -13,15 +13,19 @@
  *   gemma -p "prompt"         Non-interactive (print mode)
  *   gemma --version           Show version
  *   gemma --model-path <path> Use a specific GGUF model file
- *   gemma --backend ollama    Use Ollama instead of llama-server
  */
 
+import { existsSync, writeFileSync, mkdirSync } from 'fs'
+import { execSync } from 'child_process'
+import { join } from 'path'
+import { homedir, tmpdir } from 'os'
 import { createInterface } from 'readline'
 import chalk from 'chalk'
 import { type ServerConfig } from './api.js'
-import { createConversation, runAgent, refreshSystemPrompt } from './agent.js'
+import { createConversation, runAgent, runAgentWithImage, refreshSystemPrompt } from './agent.js'
 import { resolveConfig, formatConfig, type GemmaConfig } from './config.js'
 import { estimateConversationTokens, getTokenBudget } from './context-window.js'
+import { getUsageStats } from './memory.js'
 import { ensureAndStartServer, stopLlamaServer, registerCleanup } from './llama-server.js'
 import {
   banner,
@@ -52,12 +56,15 @@ ${chalk.bold('Usage:')}
   gemma -p "prompt"                  Non-interactive print mode
   gemma --model-path <path>          Use a specific GGUF model file
   gemma --hf-repo <repo>             Download model from HuggingFace
-  gemma --backend ollama             Use Ollama instead of llama-server
   gemma --gpu-layers <n>             GPU layers to offload (default: 99)
   gemma --version                    Show version
 
+${chalk.bold('Vision:')}
+  Attach images to any prompt by including a file path:
+    ❯ What's in this screenshot? /path/to/image.png
+    ❯ /vision /path/to/mockup.png Implement this UI
+
 ${chalk.bold('Environment Variables:')}
-  GEMMA_BACKEND                Backend: llama (default) or ollama
   GEMMA_MODEL_PATH             Path to GGUF model file
   GEMMA_HF_REPO                HuggingFace repo for model download
   GEMMA_GPU_LAYERS             GPU layers to offload
@@ -68,26 +75,19 @@ ${chalk.bold('Config File:')}
 ${chalk.bold('Interactive Commands:')}
   /exit, /quit                Exit the session
   /clear                      Clear conversation history
-  /model <name>               Switch model (Ollama backend only)
+  /vision <image> <prompt>    Send an image with a prompt (vision)
   /tokens                     Show context window usage
   /config                     Show resolved configuration
   /refresh                    Refresh system prompt (git info, etc.)
   Ctrl+C                      Cancel current operation
   Ctrl+D                      Exit
 
-${chalk.bold('Example config.json for llama-server:')}
+${chalk.bold('Example config.json:')}
   {
-    "backend": "llama",
     "modelPath": "/path/to/gemma-4-31b-it-Q4_K_M.gguf",
     "gpuLayers": 99,
     "llamaContextSize": 8192,
     "flashAttn": true
-  }
-
-${chalk.bold('Example config.json for Ollama:')}
-  {
-    "backend": "ollama",
-    "model": "gemma4:31b"
   }
 `)
   process.exit(0)
@@ -105,8 +105,6 @@ for (let i = 0; i < args.length; i++) {
     overrides.modelPath = args[++i]
   } else if (arg === '--hf-repo' && args[i + 1]) {
     overrides.hfRepo = args[++i]
-  } else if (arg === '--backend' && args[i + 1]) {
-    overrides.backend = args[++i] as 'llama' | 'ollama'
   } else if (arg === '--gpu-layers' && args[i + 1]) {
     overrides.gpuLayers = parseInt(args[++i]!, 10)
   } else if (arg === '--model' && args[i + 1]) {
@@ -118,32 +116,65 @@ for (let i = 0; i < args.length; i++) {
 
 const appConfig = resolveConfig(overrides)
 
-// ── Main ─────────────────────────────────────────────────────────────────
+// ── Image detection & clipboard ──────────────────────────────────────────
 
-async function main() {
-  let serverConfig: ServerConfig
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff'])
 
-  if (appConfig.backend === 'llama') {
-    serverConfig = await startLlamaBackend()
-  } else {
-    serverConfig = await startOllamaBackend()
-  }
+/**
+ * Check if the macOS clipboard contains an image and save it to a temp file.
+ * Returns the temp file path, or null if no image in clipboard.
+ */
+function getClipboardImage(): string | null {
+  if (process.platform !== 'darwin') return null
+  try {
+    // Check if clipboard has image data (macOS)
+    const check = execSync(
+      'osascript -e "clipboard info" 2>/dev/null',
+      { encoding: 'utf-8', timeout: 3000 }
+    )
+    if (!check.includes('«class PNGf»') && !check.includes('TIFF')) return null
 
-  if (printPrompt) {
-    await printMode(printPrompt, serverConfig)
-  } else {
-    await interactiveMode(serverConfig)
-  }
+    // Save clipboard image to temp file
+    const tmpDir = join(tmpdir(), 'gemma-code')
+    if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true })
+    const tmpPath = join(tmpDir, `clipboard-${Date.now()}.png`)
+
+    execSync(
+      `osascript -e 'set imageData to the clipboard as «class PNGf»' -e 'set filePath to POSIX path of "${tmpPath}"' -e 'set fileRef to open for access filePath with write permission' -e 'write imageData to fileRef' -e 'close access fileRef'`,
+      { timeout: 5000 }
+    )
+
+    if (existsSync(tmpPath)) return tmpPath
+  } catch {}
+  return null
 }
 
 /**
- * Start llama-server backend. Launches the server process and waits for health.
+ * Extract image paths from user input.
+ * Checks: explicit file paths in the message → clipboard image.
  */
-async function startLlamaBackend(): Promise<ServerConfig> {
-  // Register cleanup to stop server on exit
+function extractImagePath(input: string): { imagePath: string | null; text: string } {
+  // Check each word for image file paths
+  const words = input.split(/\s+/)
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!
+    const ext = '.' + word.split('.').pop()?.toLowerCase()
+    if (IMAGE_EXTENSIONS.has(ext) && existsSync(word)) {
+      const text = words.filter((_, idx) => idx !== i).join(' ').trim()
+      return { imagePath: word, text: text || 'Describe this image.' }
+    }
+  }
+  return { imagePath: null, text: input }
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────
+
+async function main() {
   registerCleanup()
 
   infoMsg('Starting llama-server...')
+  let serverConfig: ServerConfig
+
   try {
     const baseUrl = await ensureAndStartServer({
       binaryPath: appConfig.llamaBinaryPath,
@@ -162,49 +193,38 @@ async function startLlamaBackend(): Promise<ServerConfig> {
       }
     })
 
-    return { baseUrl, model: appConfig.model, requestTimeoutMs: appConfig.requestTimeoutMs }
+    serverConfig = { baseUrl, model: appConfig.model, requestTimeoutMs: appConfig.requestTimeoutMs }
   } catch (err: any) {
     errorMsg(err.message)
     process.exit(1)
   }
-}
 
-/**
- * Start Ollama backend. Just checks connectivity.
- */
-async function startOllamaBackend(): Promise<ServerConfig> {
-  const config: ServerConfig = {
-    baseUrl: appConfig.baseUrl,
-    model: appConfig.model,
-    requestTimeoutMs: appConfig.requestTimeoutMs,
+  if (printPrompt) {
+    await printMode(printPrompt, serverConfig)
+  } else {
+    await interactiveMode(serverConfig)
   }
-
-  try {
-    const res = await fetch(`${config.baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) })
-    if (!res.ok) {
-      errorMsg(`Ollama returned ${res.status}`)
-      process.exit(1)
-    }
-  } catch {
-    errorMsg(`Cannot connect to Ollama at ${config.baseUrl}. Is it running? (ollama serve)`)
-    process.exit(1)
-  }
-
-  return config
 }
 
 // ── Print mode (non-interactive) ─────────────────────────────────────────
 
 async function printMode(prompt: string, serverConfig: ServerConfig) {
   const conversation = createConversation()
-  const result = await runAgent(conversation, prompt, {
+  const { imagePath, text } = extractImagePath(prompt)
+
+  const agentOpts = {
     stream: false,
     config: serverConfig,
-    onToolStart: (name) => {
+    onToolStart: (name: string) => {
       process.stderr.write(DIM(`  ⚡ ${name}\n`))
     },
     onToolEnd: () => {},
-  })
+  }
+
+  const result = imagePath
+    ? await runAgentWithImage(conversation, text, imagePath, agentOpts)
+    : await runAgent(conversation, text, agentOpts)
+
   process.stdout.write(result + '\n')
   stopLlamaServer()
 }
@@ -213,12 +233,13 @@ async function printMode(prompt: string, serverConfig: ServerConfig) {
 
 async function interactiveMode(serverConfig: ServerConfig) {
   process.stderr.write(banner())
-  infoMsg(`Backend: ${appConfig.backend === 'llama' ? 'llama.cpp' : 'Ollama'}`)
+  infoMsg(`Backend: llama.cpp`)
   if (appConfig.modelPath) infoMsg(`Model: ${appConfig.modelPath}`)
   else if (appConfig.hfRepo) infoMsg(`Model: ${appConfig.hfRepo}`)
   else infoMsg(`Model: ${appConfig.model}`)
   infoMsg(`Server: ${serverConfig.baseUrl}`)
   infoMsg(`CWD: ${process.cwd()}`)
+  infoMsg(`Vision: enabled (attach images to prompts)`)
   infoMsg(`Context window: ${getTokenBudget(appConfig.model).toLocaleString()} tokens (with safety margin)`)
   infoMsg(`Type /help for commands, /exit to quit\n`)
 
@@ -255,27 +276,30 @@ async function interactiveMode(serverConfig: ServerConfig) {
       const spin = spinner()
       let firstChunk = true
 
-      await runAgent(conversation, input, {
+      const agentOpts = {
         stream: true,
         config: serverConfig,
-        onText: (text) => {
-          if (firstChunk) {
-            spin.stop()
-            firstChunk = false
-          }
+        onText: (text: string) => {
+          if (firstChunk) { spin.stop(); firstChunk = false }
           process.stdout.write(text)
         },
-        onToolStart: (name, args) => {
-          if (firstChunk) {
-            spin.stop()
-            firstChunk = false
-          }
+        onToolStart: (name: string, args: Record<string, unknown>) => {
+          if (firstChunk) { spin.stop(); firstChunk = false }
           toolCallHeader(name, args)
         },
-        onToolEnd: (name, result) => {
+        onToolEnd: (name: string, result: string) => {
           toolCallResult(name, result)
         },
-      })
+      }
+
+      // Auto-detect image paths in the input
+      const { imagePath, text } = extractImagePath(input)
+      if (imagePath) {
+        infoMsg(`📷 Attaching image: ${imagePath}`)
+        await runAgentWithImage(conversation, text, imagePath, agentOpts)
+      } else {
+        await runAgent(conversation, input, agentOpts)
+      }
 
       process.stdout.write('\n\n')
     } catch (e: any) {
@@ -336,23 +360,106 @@ function handleCommand(
       infoMsg('Conversation cleared')
       break
 
-    case '/model': {
+    case '/vision': {
       if (!arg) {
-        infoMsg(`Current model: ${serverConfig.model}`)
-      } else {
-        serverConfig.model = arg
-        infoMsg(`Switched to model: ${arg}`)
-        infoMsg(`Context budget: ${getTokenBudget(arg).toLocaleString()} tokens`)
+        infoMsg('Usage: /vision <image_path> <prompt>')
+        infoMsg('Example: /vision screenshot.png What does this UI show?')
+        break
       }
-      break
+      // Parse: first arg is image path, rest is prompt
+      const parts = arg.split(/\s+/)
+      const imgPath = parts[0]!
+      const prompt = parts.slice(1).join(' ') || 'Describe this image in detail.'
+
+      if (!existsSync(imgPath)) {
+        errorMsg(`Image not found: ${imgPath}`)
+        break
+      }
+
+      // Process vision request asynchronously
+      rl.pause()
+      ;(async () => {
+        try {
+          const spin = spinner()
+          let firstChunk = true
+          infoMsg(`📷 Attaching image: ${imgPath}`)
+
+          await runAgentWithImage(conversation, prompt, imgPath, {
+            stream: true,
+            config: serverConfig,
+            onText: (text: string) => {
+              if (firstChunk) { spin.stop(); firstChunk = false }
+              process.stdout.write(text)
+            },
+            onToolStart: (name: string, args: Record<string, unknown>) => {
+              if (firstChunk) { spin.stop(); firstChunk = false }
+              toolCallHeader(name, args)
+            },
+            onToolEnd: (name: string, result: string) => {
+              toolCallResult(name, result)
+            },
+          })
+
+          process.stdout.write('\n\n')
+        } catch (e: any) {
+          errorMsg(e.message || 'Vision request failed')
+        }
+        rl.resume()
+        rl.prompt()
+      })()
+      return  // Don't call rl.prompt() here — the async block handles it
+    }
+
+    case '/paste': {
+      // Grab image from clipboard and send with prompt
+      const prompt = arg || 'Describe this image in detail.'
+      const clipImg = getClipboardImage()
+      if (!clipImg) {
+        errorMsg('No image found in clipboard. Copy an image first (Cmd+C on a screenshot, etc.)')
+        break
+      }
+
+      rl.pause()
+      ;(async () => {
+        try {
+          const spin = spinner()
+          let firstChunk = true
+          infoMsg(`📷 Image from clipboard: ${clipImg}`)
+
+          await runAgentWithImage(conversation, prompt, clipImg, {
+            stream: true,
+            config: serverConfig,
+            onText: (text: string) => {
+              if (firstChunk) { spin.stop(); firstChunk = false }
+              process.stdout.write(text)
+            },
+            onToolStart: (name: string, args: Record<string, unknown>) => {
+              if (firstChunk) { spin.stop(); firstChunk = false }
+              toolCallHeader(name, args)
+            },
+            onToolEnd: (name: string, result: string) => {
+              toolCallResult(name, result)
+            },
+          })
+
+          process.stdout.write('\n\n')
+        } catch (e: any) {
+          errorMsg(e.message || 'Vision request failed')
+        }
+        rl.resume()
+        rl.prompt()
+      })()
+      return
     }
 
     case '/tokens': {
-      const used = estimateConversationTokens(conversation)
-      const budget = getTokenBudget(serverConfig.model)
-      const pct = Math.round((used / budget) * 100)
-      infoMsg(`Context usage: ~${used.toLocaleString()} / ${budget.toLocaleString()} tokens (${pct}%)`)
+      const stats = getUsageStats(conversation, serverConfig.model)
+      const pct = Math.round(stats.ratio * 100)
+      infoMsg(`Context usage: ~${stats.tokens.toLocaleString()} / ${stats.budget.toLocaleString()} tokens (${pct}%)`)
       infoMsg(`Messages: ${conversation.length}`)
+      if (stats.compactedCount > 0) {
+        infoMsg(`Compactions: ${stats.compactedCount} (old messages summarized to save context)`)
+      }
       break
     }
 
@@ -372,7 +479,7 @@ function handleCommand(
       const msgs = conversation.filter(m => m.role !== 'system')
       infoMsg(`${msgs.length} messages in conversation`)
       for (const m of msgs.slice(-10)) {
-        const content = typeof m.content === 'string' ? m.content : '(multimodal)'
+        const content = typeof m.content === 'string' ? m.content : '(image + text)'
         const preview = (content || '(tool call)').slice(0, 80)
         infoMsg(`  ${m.role}: ${preview}`)
       }
@@ -381,14 +488,19 @@ function handleCommand(
 
     case '/help':
       infoMsg('Commands:')
-      infoMsg('  /exit, /quit    Exit the session')
-      infoMsg('  /clear          Clear conversation history')
-      infoMsg('  /model <name>   Switch model')
-      infoMsg('  /tokens         Show context window usage')
-      infoMsg('  /config         Show configuration')
-      infoMsg('  /refresh        Refresh system prompt')
-      infoMsg('  /history        Show recent messages')
-      infoMsg('  /help           Show this help')
+      infoMsg('  /exit, /quit              Exit the session')
+      infoMsg('  /clear                    Clear conversation history')
+      infoMsg('  /vision <image> <prompt>  Send image with prompt')
+      infoMsg('  /paste [prompt]           Send clipboard image with prompt')
+      infoMsg('  /tokens                   Show context window usage')
+      infoMsg('  /config                   Show configuration')
+      infoMsg('  /refresh                  Refresh system prompt')
+      infoMsg('  /history                  Show recent messages')
+      infoMsg('  /help                     Show this help')
+      infoMsg('')
+      infoMsg('Vision: include an image path in any prompt:')
+      infoMsg('  ❯ What is this? /path/to/image.png')
+      infoMsg('  ❯ /paste Implement this UI design')
       break
 
     default:

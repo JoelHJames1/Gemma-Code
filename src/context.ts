@@ -7,6 +7,7 @@ import { readFileSync, existsSync } from 'fs'
 import { platform, release, userInfo } from 'os'
 import { basename, join } from 'path'
 import { resolveConfig } from './config.js'
+import { getRelevantMemories } from './memory.js'
 
 export interface EnvContext {
   cwd: string
@@ -132,5 +133,6 @@ You help users with software engineering tasks: writing code, fixing bugs, refac
  - Shell: ${ctx.shell}
  - User: ${ctx.user}
  - Date: ${ctx.date}
- - Model: Running locally via llama.cpp — all data stays on your machine${projectContext}`
+ - Model: Running locally via llama.cpp — all data stays on your machine
+ - Vision: You can analyze images sent by the user${projectContext}${getRelevantMemories(ctx.projectName)}`
 }
