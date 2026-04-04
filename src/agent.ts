@@ -11,9 +11,7 @@
 import chalk from 'chalk'
 import {
   chatCompletion,
-  chatCompletionStream,
   type Message,
-  type ToolCall,
   type OllamaConfig,
   DEFAULT_CONFIG,
 } from './ollama.js'
@@ -61,80 +59,51 @@ export async function runAgent(
 
   const tools = getToolSpecs()
   let rounds = 0
+  let emptyRetries = 0
 
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++
 
-    if (stream) {
-      // Streaming mode — show text as it arrives
-      const result = await streamRound(conversation, tools, config, onText)
+    // Use non-streaming for tool-call rounds (more reliable with Ollama),
+    // only stream the final text response to the user.
+    const msg = await chatCompletion(conversation, tools, config)
 
-      if (result.toolCalls && result.toolCalls.length > 0) {
-        // Model wants to call tools
-        conversation.push({
-          role: 'assistant',
-          content: result.text || null,
-          tool_calls: result.toolCalls,
-        })
-
-        // Execute each tool call
-        for (const tc of result.toolCalls) {
-          await executeToolCall(conversation, tc, onToolStart, onToolEnd)
-        }
-        // Loop back to get next model response
-        continue
-      }
-
-      // No tool calls — final response
-      conversation.push({ role: 'assistant', content: result.text || '' })
-      return result.text || ''
-    } else {
-      // Non-streaming mode
-      const msg = await chatCompletion(conversation, tools, config)
-
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
-        conversation.push(msg)
-        for (const tc of msg.tool_calls) {
-          await executeToolCall(conversation, tc, onToolStart, onToolEnd)
-        }
-        continue
-      }
-
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
       conversation.push(msg)
-      return msg.content || ''
+      for (const tc of msg.tool_calls) {
+        await executeToolCall(conversation, tc, onToolStart, onToolEnd)
+      }
+      continue
     }
+
+    // Empty response after tool use — nudge the model to summarize
+    if (!msg.content?.trim() && rounds > 1) {
+      conversation.push({
+        role: 'user',
+        content: 'Based on the tool results above, please provide your answer now.',
+      })
+      emptyRetries++
+      if (emptyRetries > 2) {
+        return '(The model did not produce a response. Try rephrasing your question.)'
+      }
+      continue
+    }
+
+    // Got a text response — stream it to the user if streaming is enabled
+    const text = msg.content || ''
+    if (stream && text) {
+      // Simulate streaming by writing chunks for a nicer UX
+      const words = text.split(' ')
+      for (let w = 0; w < words.length; w++) {
+        onText?.((w > 0 ? ' ' : '') + words[w]!)
+      }
+    }
+
+    conversation.push({ role: 'assistant', content: text })
+    return text
   }
 
   return '(Agent reached maximum tool call rounds. Stopping.)'
-}
-
-/**
- * Execute a single streaming round. Returns collected text and tool calls.
- */
-async function streamRound(
-  conversation: Message[],
-  tools: ReturnType<typeof getToolSpecs>,
-  config: OllamaConfig,
-  onText?: (text: string) => void,
-): Promise<{ text: string; toolCalls?: ToolCall[] }> {
-  let text = ''
-  let toolCalls: ToolCall[] | undefined
-
-  for await (const delta of chatCompletionStream(conversation, tools, config)) {
-    switch (delta.type) {
-      case 'text':
-        text += delta.text || ''
-        onText?.(delta.text || '')
-        break
-      case 'tool_calls':
-        toolCalls = delta.toolCalls
-        break
-      case 'error':
-        throw new Error(delta.error)
-    }
-  }
-
-  return { text, toolCalls }
 }
 
 /**
