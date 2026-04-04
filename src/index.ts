@@ -26,6 +26,7 @@ import { createConversation, runAgent, runAgentWithImage, refreshSystemPrompt } 
 import { resolveConfig, formatConfig, type GemmaConfig } from './config.js'
 import { estimateConversationTokens, getTokenBudget } from './context-window.js'
 import { getUsageStats } from './memory.js'
+import { getTaskList, formatTaskListForPrompt, clearTasks, loadPersistedTasks } from './tasks.js'
 import { ensureAndStartServer, stopLlamaServer, registerCleanup } from './llama-server.js'
 import {
   banner,
@@ -463,6 +464,22 @@ function handleCommand(
       break
     }
 
+    case '/tasks': {
+      const list = getTaskList() || loadPersistedTasks()
+      if (!list || list.tasks.length === 0) {
+        infoMsg('No active tasks. The agent will create a task plan when given a complex task.')
+      } else {
+        process.stderr.write(DIM(formatTaskListForPrompt()) + '\n')
+      }
+      break
+    }
+
+    case '/tasks-clear': {
+      clearTasks()
+      infoMsg('Task list cleared')
+      break
+    }
+
     case '/config': {
       infoMsg('Resolved configuration:')
       process.stderr.write(DIM(formatConfig(appConfig)) + '\n')
@@ -492,6 +509,8 @@ function handleCommand(
       infoMsg('  /clear                    Clear conversation history')
       infoMsg('  /vision <image> <prompt>  Send image with prompt')
       infoMsg('  /paste [prompt]           Send clipboard image with prompt')
+      infoMsg('  /tasks                    Show current task plan')
+      infoMsg('  /tasks-clear              Clear task plan')
       infoMsg('  /tokens                   Show context window usage')
       infoMsg('  /config                   Show configuration')
       infoMsg('  /refresh                  Refresh system prompt')

@@ -24,6 +24,7 @@ import { buildSystemPrompt, getEnvContext } from './context.js'
 import { classifyOllamaError, errorKindMessage } from './errors.js'
 import { pruneIfNeeded, estimateConversationTokens, getTokenBudget } from './context-window.js'
 import { smartCompact } from './memory.js'
+import { formatTaskListForPrompt, loadPersistedTasks, getTaskList } from './tasks.js'
 
 const MAX_TOOL_ROUNDS = 30 // Safety limit on consecutive tool-call rounds
 
@@ -88,6 +89,9 @@ export async function runAgent(
     smartCompact(conversation, config.model)
     // Fallback: hard prune if still over budget
     pruneIfNeeded(conversation, config.model)
+
+    // Inject current task list so the model never forgets what it's working on
+    injectTaskContext(conversation)
 
     // Call the model with error classification and retry
     let msg: Message
@@ -305,6 +309,35 @@ async function executeToolCall(
     onToolEnd?.(toolName, result)
     return true
   }
+}
+
+const TASK_CONTEXT_MARKER = '[TASK_CONTEXT]'
+
+/**
+ * Inject the current task list as a system message right before the model call.
+ * This ensures the model always knows what it's working on, even after compaction.
+ * Removes any previous task context message first to avoid duplication.
+ */
+function injectTaskContext(conversation: Message[]): void {
+  // Load persisted tasks if we don't have any in memory
+  if (!getTaskList()) loadPersistedTasks()
+
+  const taskPrompt = formatTaskListForPrompt()
+  if (!taskPrompt) return
+
+  const content = `${TASK_CONTEXT_MARKER}\n${taskPrompt}\n\nIMPORTANT: Keep working through your task list. Update each task as you complete it using the TaskTracker tool. If you've lost context, use TaskTracker with action "status" to review your plan.`
+
+  // Remove previous task context injection
+  for (let i = conversation.length - 1; i >= 1; i--) {
+    if (typeof conversation[i]!.content === 'string' && conversation[i]!.content!.startsWith(TASK_CONTEXT_MARKER)) {
+      conversation.splice(i, 1)
+      break
+    }
+  }
+
+  // Insert task context as the second-to-last message (right before the model sees it)
+  // This ensures it's always fresh and near the end where the model attends most
+  conversation.push({ role: 'system', content })
 }
 
 // Re-export ToolCall type for use in this module
