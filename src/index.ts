@@ -31,6 +31,8 @@ import { setAgentToolConfig } from './tools/agents.js'
 import { formatOrchestratorStatus, getOrchestratorState, clearOrchestrator } from './orchestrator.js'
 import { saveCheckpoint, loadLatestCheckpoint, listCheckpoints } from './checkpoint.js'
 import { readScratchpad, clearScratchpad } from './scratchpad.js'
+import { logEvent, getEventLogStats, getRecentActivitySummary } from './eventlog.js'
+import { getBudgetStats } from './context-compiler.js'
 import { ensureAndStartServer, stopLlamaServer, registerCleanup } from './llama-server.js'
 import {
   banner,
@@ -256,6 +258,7 @@ async function printMode(prompt: string, serverConfig: ServerConfig) {
 
 async function interactiveMode(serverConfig: ServerConfig) {
   process.stderr.write(banner())
+  logEvent('session_start', 'system', { model: appConfig.model, cwd: process.cwd() })
   infoMsg(`Backend: llama.cpp`)
   if (appConfig.modelPath) infoMsg(`Model: ${appConfig.modelPath}`)
   else if (appConfig.hfRepo) infoMsg(`Model: ${appConfig.hfRepo}`)
@@ -548,6 +551,29 @@ function handleCommand(
       break
     }
 
+    case '/budget': {
+      const stats = getBudgetStats(serverConfig.model, conversation.length)
+      infoMsg(`Context budget: ${stats.totalBudget.toLocaleString()} tokens`)
+      for (const s of stats.slices) {
+        infoMsg(`  ${s.name}: ${s.budget.toLocaleString()} tokens (${s.pct})`)
+      }
+      break
+    }
+
+    case '/eventlog': {
+      const stats = getEventLogStats()
+      infoMsg(`Event log: ${stats.totalEvents} events`)
+      infoMsg(`  Tool calls: ${stats.toolCalls}`)
+      infoMsg(`  Errors: ${stats.errors}`)
+      infoMsg(`  Compactions: ${stats.compactions}`)
+      if (stats.sessionStart) infoMsg(`  Session started: ${stats.sessionStart}`)
+      if (arg === 'recent') {
+        infoMsg('\nRecent activity:')
+        process.stderr.write(DIM(getRecentActivitySummary(20)) + '\n')
+      }
+      break
+    }
+
     case '/config': {
       infoMsg('Resolved configuration:')
       process.stderr.write(DIM(formatConfig(appConfig)) + '\n')
@@ -582,6 +608,8 @@ function handleCommand(
       infoMsg('  /agents                   Show multi-agent status')
       infoMsg('  /checkpoint               Save conversation state')
       infoMsg('  /resume                   Resume from last checkpoint')
+      infoMsg('  /budget                   Show context budget allocation')
+      infoMsg('  /eventlog [recent]        Show event log stats')
       infoMsg('  /tokens                   Show context window usage')
       infoMsg('  /config                   Show configuration')
       infoMsg('  /refresh                  Refresh system prompt')

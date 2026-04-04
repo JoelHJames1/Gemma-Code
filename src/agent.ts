@@ -27,6 +27,8 @@ import { smartCompact } from './memory.js'
 import { formatTaskListForPrompt, loadPersistedTasks, getTaskList } from './tasks.js'
 import { formatScratchpadForPrompt } from './scratchpad.js'
 import { saveCheckpoint } from './checkpoint.js'
+import { logEvent } from './eventlog.js'
+import { compileContext } from './context-compiler.js'
 
 const MAX_TOOL_ROUNDS = 30 // Safety limit on consecutive tool-call rounds
 
@@ -72,15 +74,13 @@ export async function runAgent(
     onToolEnd,
   } = options
 
-  // Refresh system prompt with current env state + search memories relevant to this query
-  refreshSystemPrompt(conversation, userMessage)
+  // Log the user message
+  logEvent('user_message', 'user', { content: userMessage })
 
-  // Add user message (text or multimodal)
+  // Add user message to the raw conversation (ground truth)
   conversation.push({ role: 'user', content: userMessage })
 
-  // Anchor the goal — store it so we can re-inject after compaction
   const goalAnchor = userMessage
-
   const tools = getToolSpecs()
   let rounds = 0
   let emptyRetries = 0
@@ -90,26 +90,28 @@ export async function runAgent(
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++
 
-    // Smart compaction: summarize old messages when context fills up
+    // Compact raw conversation if it's getting large
     smartCompact(conversation, config.model)
-    // Fallback: hard prune if still over budget
     pruneIfNeeded(conversation, config.model)
 
-    // Inject persistent context that survives compaction:
-    // 1. Task list (what we're doing)
-    // 2. Scratchpad (what we've learned)
-    // 3. Goal anchor (what the user asked for)
-    injectPersistentContext(conversation, goalAnchor)
+    // CONTEXT COMPILER: build the optimal prompt from the token budget
+    // This replaces ad-hoc injection with proper budget allocation
+    const compiledContext = compileContext(
+      conversation,
+      config.model,
+      goalAnchor,
+    )
 
     // Auto-checkpoint every 5 rounds
     if (rounds % 5 === 0 && rounds > 0) {
       saveCheckpoint(conversation, { goal: goalAnchor, round: rounds })
+      logEvent('checkpoint', 'system', { round: rounds, goal: goalAnchor })
     }
 
-    // Call the model with error classification and retry
+    // Call the model with the COMPILED context (not raw conversation)
     let msg: Message
     try {
-      msg = await chatCompletion(conversation, tools, config)
+      msg = await chatCompletion(compiledContext, tools, config)
     } catch (err) {
       const kind = classifyOllamaError(err)
 
@@ -304,82 +306,26 @@ async function executeToolCall(
   }
 
   onToolStart?.(toolName, args)
+  logEvent('tool_call', 'agent', { tool: toolName, args: JSON.stringify(args).slice(0, 500) })
 
   try {
     const result = await tool.execute(args)
-    // Truncate very large results to avoid context overflow
     const maxLen = 50000
     const truncated =
       result.length > maxLen
         ? result.slice(0, maxLen) + `\n\n... (truncated, ${result.length - maxLen} chars omitted)`
         : result
     conversation.push({ role: 'tool', content: truncated, tool_call_id: tc.id })
+    logEvent('tool_result', 'agent', { tool: toolName, result: truncated.slice(0, 300) })
     onToolEnd?.(toolName, truncated)
     return result.startsWith('Error')
   } catch (e: any) {
     const result = `Error executing ${toolName}: ${e.message}`
     conversation.push({ role: 'tool', content: result, tool_call_id: tc.id })
+    logEvent('error', 'agent', { tool: toolName, message: e.message })
     onToolEnd?.(toolName, result)
     return true
   }
-}
-
-const PERSISTENT_CONTEXT_MARKER = '[PERSISTENT_CONTEXT]'
-
-/**
- * Inject persistent context that survives context compaction.
- * This is the agent's "always visible" state — injected at the END
- * of the conversation (where the model attends most) before every call.
- *
- * Contains:
- * 1. Original user goal (never forget what we're doing)
- * 2. Task plan with progress tracking
- * 3. Scratchpad notes (agent's external brain)
- * 4. Instructions for self-recovery if context was lost
- */
-function injectPersistentContext(conversation: Message[], goalAnchor: string): void {
-  // Load persisted tasks if we don't have any in memory
-  if (!getTaskList()) loadPersistedTasks()
-
-  const sections: string[] = []
-
-  // 1. Goal anchor — always remind the model what the user asked for
-  sections.push(`## Original Goal\n${goalAnchor}`)
-
-  // 2. Task plan
-  const taskPrompt = formatTaskListForPrompt()
-  if (taskPrompt) {
-    sections.push(taskPrompt)
-  }
-
-  // 3. Scratchpad
-  const scratchpad = formatScratchpadForPrompt()
-  if (scratchpad) {
-    sections.push(scratchpad)
-  }
-
-  // 4. Recovery instructions
-  sections.push(
-    '## Instructions\n' +
-    '- Work through your task list. Update each task as you complete it.\n' +
-    '- Write important findings to the Scratchpad so you never lose them.\n' +
-    '- If you feel confused or lost, read the Scratchpad and check TaskTracker status.\n' +
-    '- Stay focused on the Original Goal above.'
-  )
-
-  const content = `${PERSISTENT_CONTEXT_MARKER}\n${sections.join('\n\n')}`
-
-  // Remove previous persistent context injection
-  for (let i = conversation.length - 1; i >= 1; i--) {
-    if (typeof conversation[i]!.content === 'string' &&
-        conversation[i]!.content!.startsWith(PERSISTENT_CONTEXT_MARKER)) {
-      conversation.splice(i, 1)
-      break
-    }
-  }
-
-  // Insert at the end — this is the last thing the model sees
-  conversation.push({ role: 'system', content })
 }
 
 // Re-export ToolCall type for use in this module

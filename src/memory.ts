@@ -22,6 +22,7 @@ import { homedir } from 'os'
 import type { Message } from './api.js'
 import { estimateMessageTokens, estimateConversationTokens, getTokenBudget } from './context-window.js'
 import { search, type SearchDocument } from './vectorsearch.js'
+import { logEvent } from './eventlog.js'
 
 // ── Thresholds ───────────────────────────────────────────────────────────
 
@@ -36,6 +37,9 @@ interface MemoryEntry {
   summary: string
   project?: string
   tags?: string[]
+  status?: 'active' | 'superseded'    // Fact supersession
+  supersededBy?: string                // ID of replacing entry
+  id?: string                          // For linking supersession
 }
 
 interface MemoryStore {
@@ -66,18 +70,49 @@ function saveMemory(store: MemoryStore): void {
 /**
  * Add a memory entry from a conversation summary.
  */
-export function addMemory(summary: string, project?: string): void {
+export function addMemory(summary: string, project?: string): string {
   const store = loadMemory()
+  const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
   store.entries.push({
+    id,
     timestamp: new Date().toISOString(),
     summary,
     project,
+    status: 'active',
   })
-  // Keep max 50 entries
-  if (store.entries.length > 50) {
-    store.entries = store.entries.slice(-50)
+  // Keep max 100 entries (active + superseded)
+  if (store.entries.length > 100) {
+    // Remove oldest superseded first, then oldest active
+    const superseded = store.entries.filter(e => e.status === 'superseded')
+    const active = store.entries.filter(e => e.status !== 'superseded')
+    store.entries = [...active.slice(-80), ...superseded.slice(-20)]
   }
   saveMemory(store)
+  return id
+}
+
+/**
+ * Supersede a memory entry with a new one.
+ * The old entry is marked as superseded and linked to the new one.
+ * This prevents stale facts from being returned in searches.
+ */
+export function supersedeMemory(oldSummarySubstring: string, newSummary: string, project?: string): string | null {
+  const store = loadMemory()
+
+  // Find the most recent active entry matching the substring
+  const oldEntry = store.entries
+    .filter(e => e.status !== 'superseded' && e.summary.includes(oldSummarySubstring))
+    .pop()
+
+  const newId = addMemory(newSummary, project)
+
+  if (oldEntry) {
+    oldEntry.status = 'superseded'
+    oldEntry.supersededBy = newId
+    saveMemory(store)
+  }
+
+  return newId
 }
 
 /**
@@ -101,10 +136,15 @@ export function getRelevantMemories(
 
   if (query && store.entries.length > 5) {
     // Vector search: find memories most relevant to the current query
-    const docs: SearchDocument[] = store.entries.map((e, i) => ({
-      id: i,
-      text: `${e.summary} ${e.project || ''}`,
-      metadata: { timestamp: e.timestamp, project: e.project },
+    // Filter out superseded entries — they've been replaced by newer facts
+    const activeEntries = store.entries
+      .map((e, i) => ({ entry: e, idx: i }))
+      .filter(({ entry }) => entry.status !== 'superseded')
+
+    const docs: SearchDocument[] = activeEntries.map(({ entry, idx }) => ({
+      id: idx,
+      text: `${entry.summary} ${entry.project || ''}`,
+      metadata: { timestamp: entry.timestamp, project: entry.project },
     }))
 
     const results = search(docs, query, 10, 0.05)
@@ -118,13 +158,14 @@ export function getRelevantMemories(
 
     selected = [...vectorEntries, ...recentEntries]
   } else {
-    // Fallback: recency + project filtering
+    // Fallback: recency + project filtering (exclude superseded)
+    const active = store.entries.filter(e => e.status !== 'superseded')
     if (project) {
-      const projectEntries = store.entries.filter(e => e.project === project)
-      const otherEntries = store.entries.filter(e => e.project !== project)
+      const projectEntries = active.filter(e => e.project === project)
+      const otherEntries = active.filter(e => e.project !== project)
       selected = [...projectEntries.slice(-8), ...otherEntries.slice(-3)]
     } else {
-      selected = store.entries.slice(-10)
+      selected = active.slice(-10)
     }
   }
 
@@ -149,9 +190,14 @@ export function searchMemories(
   const store = loadMemory()
   if (store.entries.length === 0) return []
 
-  const docs: SearchDocument[] = store.entries.map((e, i) => ({
-    id: i,
-    text: `${e.summary} ${e.project || ''}`,
+  // Filter out superseded entries
+  const activeWithIdx = store.entries
+    .map((e, i) => ({ entry: e, idx: i }))
+    .filter(({ entry }) => entry.status !== 'superseded')
+
+  const docs: SearchDocument[] = activeWithIdx.map(({ entry, idx }) => ({
+    id: idx,
+    text: `${entry.summary} ${entry.project || ''}`,
   }))
 
   const results = search(docs, query, topK, 0.03)
@@ -307,6 +353,12 @@ export function smartCompact(messages: Message[], model: string): boolean {
 
   messages.length = 0
   messages.push(systemMsg, compactedMsg, ...recentMessages)
+
+  logEvent('compaction', 'system', {
+    removedCount: oldMessages.length,
+    keptCount: recentMessages.length,
+    summary: summary.slice(0, 300),
+  })
 
   return true
 }
