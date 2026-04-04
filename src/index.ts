@@ -38,6 +38,9 @@ import { getMemoryStats } from './identity/autobiographical.js'
 import { getGraphStats, searchGraph } from './knowledge/graph.js'
 import { getBeliefStats, searchBeliefs } from './knowledge/beliefs.js'
 import { getCuriosityStats, getOpenQuestions } from './growth/curiosity.js'
+import { startDaemon, stopDaemon, markBusy, markIdle, getDaemonStats } from './existence/daemon.js'
+import { deepenRelationship } from './emotional/relationships.js'
+import { scoreSessionSignificance, classifyExperience } from './emotional/significance.js'
 import { getSkillStats, getAllSkills } from './growth/skills.js'
 import { getGoalStats, getActiveGoals } from './growth/goals.js'
 import { getEpisodeStats, searchEpisodes } from './episodes.js'
@@ -308,8 +311,9 @@ async function interactiveMode(serverConfig: ServerConfig) {
   // Initialize capability gating with project root
   initCapabilities(process.cwd())
 
-  // Load persistent identity
+  // Load persistent identity and start background daemon
   const identityContext = startSession()
+  startDaemon()
 
   process.stderr.write(banner())
   logEvent('session_start', 'system', { model: appConfig.model, cwd: process.cwd() })
@@ -406,6 +410,7 @@ async function interactiveMode(serverConfig: ServerConfig) {
   ) {
     isProcessing = true
     currentAbort = new AbortController()
+    markBusy()
 
     let spin = spinner()
     try {
@@ -460,13 +465,27 @@ async function interactiveMode(serverConfig: ServerConfig) {
 
     isProcessing = false
     currentAbort = null
+    markIdle()
     rl.prompt()
   }
 
   rl.on('close', () => {
+    stopDaemon()
+
+    // Emotional processing: score this session's significance
+    const significance = scoreSessionSignificance(conversation)
+    const experience = classifyExperience(conversation)
+
+    // Deepen relationship with this user
+    deepenRelationship('default_user', conversation)
+
     // Save identity — learn from this session before dying
     endSession(conversation)
-    process.stderr.write(DIM('\nGoodbye! I\'ll remember this session.\n'))
+
+    if (significance.overall > 0.5) {
+      process.stderr.write(DIM(`\nThis was a ${experience} session. ${significance.reason}\n`))
+    }
+    process.stderr.write(DIM('Goodbye! I\'ll remember this session.\n'))
     stopLlamaServer()
     process.exit(0)
   })
