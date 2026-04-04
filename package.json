@@ -1,7 +1,7 @@
 {
   "name": "gemma-code",
   "version": "1.0.0",
-  "description": "Gemma Code — Agentic coding CLI powered by Ollama gemma4:31b",
+  "description": "Gemma Code — Multi-agent coding CLI powered by llama.cpp + gemma4",
   "license": "MIT",
   "type": "module",
   "bin": {

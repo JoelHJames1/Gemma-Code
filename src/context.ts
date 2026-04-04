@@ -109,7 +109,7 @@ function gatherProjectContext(cwd: string): string {
     : ''
 }
 
-export function buildSystemPrompt(ctx: EnvContext): string {
+export function buildSystemPrompt(ctx: EnvContext, currentQuery?: string): string {
   const gitInfo = ctx.isGit
     ? `\n - Git repository: branch "${ctx.gitBranch}"${ctx.gitStatus ? `\n - Uncommitted changes:\n${ctx.gitStatus}` : ' (clean)'}`
     : '\n - Not a git repository'
@@ -137,5 +137,5 @@ SpawnAgent — spawn worker agents for independent subtasks (large tasks only)
 
 # System
 ${ctx.modelName} | ${ctx.cpuCores} cores | ${ctx.freeMemoryGB}GB free / ${ctx.totalMemoryGB}GB RAM${ramWarning}
-${ctx.cwd} | ${ctx.projectName}${gitInfo} | ${ctx.osVersion} | ${ctx.date}${projectContext}${getRelevantMemories(ctx.projectName)}`
+${ctx.cwd} | ${ctx.projectName}${gitInfo} | ${ctx.osVersion} | ${ctx.date}${projectContext}${getRelevantMemories(ctx.projectName, 2000, currentQuery)}`
 }

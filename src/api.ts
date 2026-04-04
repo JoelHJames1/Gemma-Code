@@ -4,6 +4,7 @@
  * Includes streaming, tool calling, and retry logic.
  */
 
+import { readFileSync } from 'fs'
 import { retryWithBackoff } from './errors.js'
 
 export interface Tool {
@@ -236,7 +237,6 @@ export async function* chatCompletionStream(
  * Encodes a local file as a base64 data URL.
  */
 export function createVisionMessage(text: string, imagePath: string): Message {
-  const { readFileSync } = require('fs')
   const imageData = readFileSync(imagePath)
   const base64 = imageData.toString('base64')
   const ext = imagePath.split('.').pop()?.toLowerCase() || 'png'

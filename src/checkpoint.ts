@@ -12,7 +12,7 @@
  * Storage: .gemma-code/checkpoints/ in the project directory
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import type { Message } from './api.js'
 
@@ -55,7 +55,6 @@ export function saveCheckpoint(
   while (files.length > MAX_CHECKPOINTS) {
     const old = files.shift()!
     try {
-      const { unlinkSync } = require('fs')
       unlinkSync(join(dir, old))
     } catch {}
   }

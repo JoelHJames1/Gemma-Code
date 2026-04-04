@@ -21,6 +21,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import type { Message } from './api.js'
 import { estimateMessageTokens, estimateConversationTokens, getTokenBudget } from './context-window.js'
+import { search, type SearchDocument } from './vectorsearch.js'
 
 // ── Thresholds ───────────────────────────────────────────────────────────
 
@@ -80,31 +81,90 @@ export function addMemory(summary: string, project?: string): void {
 }
 
 /**
- * Get relevant memories for the current project.
+ * Get relevant memories using TF-IDF vector search.
+ *
+ * If a query is provided (e.g., the user's current message), searches
+ * semantically for the most relevant memories. Otherwise falls back
+ * to recency + project filtering.
+ *
  * Returns a formatted string to inject into the system prompt.
  */
-export function getRelevantMemories(project?: string, maxChars = 2000): string {
+export function getRelevantMemories(
+  project?: string,
+  maxChars = 2000,
+  query?: string,
+): string {
   const store = loadMemory()
   if (store.entries.length === 0) return ''
 
-  // Get recent entries, prioritize same project
-  let relevant = store.entries
-  if (project) {
-    const projectEntries = relevant.filter(e => e.project === project)
-    const otherEntries = relevant.filter(e => e.project !== project)
-    relevant = [...projectEntries.slice(-10), ...otherEntries.slice(-5)]
+  let selected: MemoryEntry[]
+
+  if (query && store.entries.length > 5) {
+    // Vector search: find memories most relevant to the current query
+    const docs: SearchDocument[] = store.entries.map((e, i) => ({
+      id: i,
+      text: `${e.summary} ${e.project || ''}`,
+      metadata: { timestamp: e.timestamp, project: e.project },
+    }))
+
+    const results = search(docs, query, 10, 0.05)
+
+    // Merge: top vector results + most recent 3 (for recency)
+    const vectorIds = new Set(results.map(r => r.id as number))
+    const vectorEntries = results.map(r => store.entries[r.id as number]!)
+    const recentEntries = store.entries
+      .slice(-3)
+      .filter((_, i) => !vectorIds.has(store.entries.length - 3 + i))
+
+    selected = [...vectorEntries, ...recentEntries]
   } else {
-    relevant = relevant.slice(-15)
+    // Fallback: recency + project filtering
+    if (project) {
+      const projectEntries = store.entries.filter(e => e.project === project)
+      const otherEntries = store.entries.filter(e => e.project !== project)
+      selected = [...projectEntries.slice(-8), ...otherEntries.slice(-3)]
+    } else {
+      selected = store.entries.slice(-10)
+    }
   }
 
   let text = ''
-  for (const entry of relevant) {
+  for (const entry of selected) {
     const line = `- [${entry.timestamp.split('T')[0]}] ${entry.summary}\n`
     if (text.length + line.length > maxChars) break
     text += line
   }
 
-  return text ? `\n\n# Memories from previous sessions\n${text}` : ''
+  return text ? `\n\n# Relevant memories\n${text}` : ''
+}
+
+/**
+ * Search memories with a specific query. Used by tools/agents.
+ * Returns raw results with scores.
+ */
+export function searchMemories(
+  query: string,
+  topK = 10,
+): Array<{ score: number; summary: string; timestamp: string; project?: string }> {
+  const store = loadMemory()
+  if (store.entries.length === 0) return []
+
+  const docs: SearchDocument[] = store.entries.map((e, i) => ({
+    id: i,
+    text: `${e.summary} ${e.project || ''}`,
+  }))
+
+  const results = search(docs, query, topK, 0.03)
+
+  return results.map(r => {
+    const entry = store.entries[r.id as number]!
+    return {
+      score: Math.round(r.score * 100) / 100,
+      summary: entry.summary,
+      timestamp: entry.timestamp,
+      project: entry.project,
+    }
+  })
 }
 
 // ── Conversation compaction ──────────────────────────────────────────────

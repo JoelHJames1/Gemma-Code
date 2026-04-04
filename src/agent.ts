@@ -49,9 +49,9 @@ export function createConversation(): Message[] {
 /**
  * Refresh the system prompt in an existing conversation.
  */
-export function refreshSystemPrompt(conversation: Message[]): void {
+export function refreshSystemPrompt(conversation: Message[], currentQuery?: string): void {
   const ctx = getEnvContext()
-  conversation[0] = { role: 'system', content: buildSystemPrompt(ctx) }
+  conversation[0] = { role: 'system', content: buildSystemPrompt(ctx, currentQuery) }
 }
 
 /**
@@ -72,8 +72,8 @@ export async function runAgent(
     onToolEnd,
   } = options
 
-  // Refresh system prompt with current env state (git branch, etc.)
-  refreshSystemPrompt(conversation)
+  // Refresh system prompt with current env state + search memories relevant to this query
+  refreshSystemPrompt(conversation, userMessage)
 
   // Add user message (text or multimodal)
   conversation.push({ role: 'user', content: userMessage })
