@@ -12,6 +12,11 @@ const SAFETY_MARGIN = 1.2
 
 /** Known context windows for common Ollama models (in tokens). */
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+  'gemma4:31b': 131072,
+  'gemma4:12b': 131072,
+  'gemma4': 131072,
+  'gemma3': 131072,
+  'gemma2': 8192,
   'qwen3.5:0.8b': 32768,
   'qwen3.5:4b': 32768,
   'qwen3.5:9b': 32768,
@@ -38,7 +43,7 @@ const DEFAULT_CONTEXT_WINDOW = 32768
 
 /**
  * Get the context window size for a model (in tokens).
- * Matches by prefix (e.g., "qwen3.5" matches "qwen3.5:0.8b").
+ * Matches by prefix (e.g., "gemma4" matches "gemma4:31b").
  */
 export function getModelContextWindow(model: string): number {
   // Exact match first

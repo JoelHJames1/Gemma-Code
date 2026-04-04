@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 /**
- * Qwen Code — Agentic coding CLI powered by Ollama
+ * Gemma Code — Agentic coding CLI powered by Ollama
  *
  * Usage:
- *   qwen                     Interactive REPL
- *   qwen -p "prompt"         Non-interactive (print mode)
- *   qwen --version           Show version
- *   qwen --model <model>     Use a different Ollama model
+ *   gemma                     Interactive REPL
+ *   gemma -p "prompt"         Non-interactive (print mode)
+ *   gemma --version           Show version
+ *   gemma --model <model>     Use a different Ollama model
  */
 
 import { createInterface } from 'readline'
@@ -31,26 +31,26 @@ import {
 const args = process.argv.slice(2)
 
 if (args.includes('--version') || args.includes('-v')) {
-  console.log('1.0.0 (Qwen Code)')
+  console.log('1.0.0 (Gemma Code)')
   process.exit(0)
 }
 
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
-${chalk.bold('Qwen Code')} — Agentic coding CLI powered by Ollama
+${chalk.bold('Gemma Code')} — Agentic coding CLI powered by Ollama
 
 ${chalk.bold('Usage:')}
-  qwen                        Start interactive session
-  qwen -p "prompt"            Non-interactive print mode
-  qwen --model <model>        Use a different Ollama model
-  qwen --version              Show version
+  gemma                        Start interactive session
+  gemma -p "prompt"            Non-interactive print mode
+  gemma --model <model>        Use a different Ollama model
+  gemma --version              Show version
 
 ${chalk.bold('Environment Variables:')}
   OLLAMA_BASE_URL             Ollama server URL (default: http://localhost:11434)
-  OLLAMA_MODEL                Default model (default: qwen3.5:0.8b)
+  OLLAMA_MODEL                Default model (default: gemma4:31b)
 
 ${chalk.bold('Config File:')}
-  ~/.config/qwen-code/config.json
+  ~/.config/gemma-code/config.json
 
 ${chalk.bold('Interactive Commands:')}
   /exit, /quit                Exit the session

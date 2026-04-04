@@ -97,7 +97,7 @@ export function buildSystemPrompt(ctx: EnvContext): string {
 
   const projectContext = gatherProjectContext(ctx.cwd)
 
-  return `You are Qwen Code, an autonomous agentic coding assistant running locally via Ollama.
+  return `You are Gemma Code, an autonomous agentic coding assistant running locally via Ollama.
 You help users with software engineering tasks: writing code, fixing bugs, refactoring, explaining code, running commands, and more.
 
 # How you work

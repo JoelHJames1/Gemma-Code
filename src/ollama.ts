@@ -4,7 +4,7 @@
  */
 
 import { retryWithBackoff } from './errors.js'
-import { resolveConfig, type QwenConfig } from './config.js'
+import { resolveConfig, type GemmaConfig } from './config.js'
 
 export interface Tool {
   type: 'function'

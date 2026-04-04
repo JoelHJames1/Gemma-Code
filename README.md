@@ -20,27 +20,27 @@
 
 ```
 
-# 👻 Qwen Code
+# 👻 Gemma Code
 
 ### The Local-First Agentic Coding CLI
 
 **Your AI pair programmer that runs entirely on your machine. No API keys. No cloud. No data leaves your laptop.**
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-1.3K_lines-3178C6?logo=typescript&logoColor=white)](#architecture)
+[![TypeScript](https://img.shields.io/badge/TypeScript-1.8K_lines-3178C6?logo=typescript&logoColor=white)](#architecture)
 [![Bun](https://img.shields.io/badge/Runtime-Bun-f472b6?logo=bun&logoColor=white)](#quick-start)
 [![Ollama](https://img.shields.io/badge/LLM-Ollama-000000?logo=ollama&logoColor=white)](#quick-start)
-[![Qwen 3.5](https://img.shields.io/badge/Model-Qwen_3.5-7C3AED)](#model-support)
+[![Gemma 4](https://img.shields.io/badge/Model-Gemma_4-4285F4)](#model-support)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
 
 ---
 
-## What is Qwen Code?
+## What is Gemma Code?
 
-Qwen Code is a **fully autonomous coding agent** that runs in your terminal. Give it a task — it reads your codebase, makes changes, runs tests, and iterates until the job is done. All powered by [Ollama](https://ollama.com) running locally on your machine.
+Gemma Code is a **fully autonomous coding agent** that runs in your terminal. Give it a task — it reads your codebase, makes changes, runs tests, and iterates until the job is done. All powered by [Ollama](https://ollama.com) running locally on your machine.
 
-Unlike cloud-based coding assistants, Qwen Code:
+Unlike cloud-based coding assistants, Gemma Code:
 - **Never sends your code to any server** — 100% local inference
 - **Requires zero API keys** — just Ollama + a model
 - **Works offline** — no internet needed after model download
@@ -52,12 +52,12 @@ Unlike cloud-based coding assistants, Qwen Code:
 ## Capabilities
 
 ### Agentic Tool Calling
-Qwen Code doesn't just suggest code — it **acts**. The agent loop works like this:
+Gemma Code doesn't just suggest code — it **acts**. The agent loop works like this:
 
 ```
 You: "Fix the failing test in auth.ts"
 
-Qwen Code thinks → calls Grep to find the test
+Gemma Code thinks → calls Grep to find the test
              → calls Read to examine the test file
              → calls Read to examine the source file
              → calls Edit to fix the bug
@@ -92,7 +92,7 @@ Here are the files in src/...
 ```
 
 ### Git-Aware Context
-Qwen Code automatically detects:
+Gemma Code automatically detects:
 - Whether you're in a git repository
 - Current branch name
 - Uncommitted changes
@@ -104,15 +104,15 @@ This context is injected into every conversation so the model understands your p
 Full interactive terminal with:
 - **Streaming output** — see responses as they generate
 - **Conversation memory** — the model remembers your full conversation
-- **Slash commands** — `/clear`, `/model`, `/history`, `/help`, `/exit`
-- **Model switching** — change models mid-conversation with `/model gemma4:e4b`
+- **Slash commands** — `/clear`, `/model`, `/history`, `/tokens`, `/config`, `/help`, `/exit`
+- **Model switching** — change models mid-conversation with `/model gemma4:12b`
 - **Ctrl+C handling** — interrupt gracefully without losing your session
 
 ### Non-Interactive Mode
 Perfect for scripts, CI/CD, and piping:
 ```bash
-qwen -p "Explain what this project does" > summary.txt
-qwen -p "List all TODO comments" --model qwen3:8b
+gemma -p "Explain what this project does" > summary.txt
+gemma -p "List all TODO comments" --model gemma4:12b
 ```
 
 ---
@@ -130,7 +130,7 @@ qwen -p "List all TODO comments" --model qwen3:8b
 curl -fsSL https://ollama.com/install.sh | sh
 
 # 2. Pull the model
-ollama pull qwen3.5:9b
+ollama pull gemma4:31b
 
 # 3. Clone and install
 git clone https://github.com/JoelHJames1/Qwen-Code.git
@@ -141,54 +141,54 @@ bun install
 bun link
 
 # 5. Run it!
-qwen
+gemma
 ```
 
 ### Usage
 
 ```bash
 # Interactive mode (REPL)
-qwen
+gemma
 
 # Non-interactive (print mode)
-qwen -p "Fix the type error in utils.ts"
+gemma -p "Fix the type error in utils.ts"
 
 # Use a different model
-qwen --model gemma4:e4b
+gemma --model gemma4:12b
 
 # Show help
-qwen --help
+gemma --help
 
 # Show version
-qwen --version
+gemma --version
 ```
 
 ---
 
 ## Model Support
 
-Qwen Code works with **any Ollama model** that supports tool calling. Default is `qwen3.5:9b`.
+Gemma Code works with **any Ollama model** that supports tool calling. Default is `gemma4:31b`.
 
 | Model | Command | Notes |
 |-------|---------|-------|
-| **Qwen 3.5 9B** (default) | `qwen` | Best balance of speed and capability |
-| Qwen 3.5 0.8B | `qwen --model qwen3.5:0.8b` | Ultra-fast, lighter tasks |
-| Gemma 4 E4B | `qwen --model gemma4:e4b` | Google's latest |
-| Llama 3.1 | `qwen --model llama3.1` | Meta's open model |
-| Codestral | `qwen --model codestral` | Code-specialized |
-| DeepSeek Coder V2 | `qwen --model deepseek-coder-v2` | Code-focused |
+| **Gemma 4 31B** (default) | `gemma` | Best balance of capability and quality |
+| Gemma 4 12B | `gemma --model gemma4:12b` | Faster, lighter tasks |
+| Qwen 3.5 9B | `gemma --model qwen3.5:9b` | Alibaba's strong coder |
+| Llama 3.1 | `gemma --model llama3.1` | Meta's open model |
+| Codestral | `gemma --model codestral` | Code-specialized |
+| DeepSeek Coder V2 | `gemma --model deepseek-coder-v2` | Code-focused |
 
 Override the default via environment variable:
 ```bash
-export OLLAMA_MODEL=gemma4:e4b
-qwen
+export OLLAMA_MODEL=gemma4:12b
+gemma
 ```
 
 ---
 
 ## Architecture
 
-Clean, modular TypeScript — 16 files, ~1,300 lines. No bloat.
+Clean, modular TypeScript — 16 files, ~1,900 lines. No bloat.
 
 ```
 src/
@@ -197,25 +197,38 @@ src/
 │
 ├── agent.ts              Core agent loop
 │                         Send → tool_calls → execute → feed back → repeat
-│                         Supports streaming and non-streaming modes
+│                         Error recovery, context pruning, self-correction
 │                         Safety limit: 30 consecutive tool rounds
 │
 ├── ollama.ts             Ollama API client
 │                         OpenAI-compatible /v1/chat/completions
 │                         Streaming via SSE with incremental tool call assembly
-│                         Connection health checking
+│                         Retry with backoff on transient failures
 │
 ├── context.ts            Environment awareness
 │                         Git branch/status detection
 │                         OS, shell, user, date context
+│                         Project bootstrap (package.json, README, etc.)
 │                         System prompt construction
+│
+├── errors.ts             Error classification & retry logic
+│                         Categorizes: timeout, connection, context overflow
+│                         Exponential backoff for transient failures
+│
+├── context-window.ts     Context window management
+│                         Token estimation, conversation pruning
+│                         Model-aware context budgets
+│
+├── config.ts             Configuration system
+│                         ~/.config/gemma-code/config.json
+│                         Layered: CLI > env > file > defaults
 │
 ├── tools/
 │   ├── index.ts          Tool registry — maps names to implementations
 │   ├── types.ts          ToolDefinition interface (spec + execute)
 │   ├── read.ts           File reading with line numbers + pagination
 │   ├── write.ts          File creation with auto-mkdir
-│   ├── edit.ts           Exact string replacement with uniqueness checks
+│   ├── edit.ts           Exact string replacement with fuzzy hints
 │   ├── bash.ts           Shell execution with timeout + output capture
 │   ├── glob.ts           Pattern matching (Bun.Glob + find fallback)
 │   └── grep.ts           Content search (ripgrep + grep fallback)
@@ -281,7 +294,7 @@ The model responds with structured `tool_calls` that the agent executes and feed
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `qwen3.5:9b` | Default model |
+| `OLLAMA_MODEL` | `gemma4:31b` | Default model |
 
 ---
 
@@ -289,15 +302,17 @@ The model responds with structured `tool_calls` that the agent executes and feed
 
 - **Max 30 tool rounds** per user message — prevents infinite loops
 - **Output truncation** — tool results over 50KB are truncated to avoid context overflow
+- **Context window management** — automatic conversation pruning when approaching limits
 - **Command timeouts** — Bash commands timeout after 30 seconds (configurable up to 5 minutes)
 - **Edit uniqueness check** — warns if a string replacement would match multiple locations
+- **Self-correction** — nudges the model to try different approaches after repeated tool failures
 - **No destructive defaults** — the model is instructed to ask before force-pushing or deleting
 
 ---
 
 ## Compared to Cloud-Based Alternatives
 
-| Feature | Qwen Code | Cloud CLIs |
+| Feature | Gemma Code | Cloud CLIs |
 |---------|:---------:|:----------:|
 | Runs 100% locally | Yes | No |
 | Requires API key | No | Yes |
@@ -336,7 +351,7 @@ MIT
       ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
 ```
 
-**👻 Qwen Code — Your code. Your machine. Your agent.**
+**👻 Gemma Code — Your code. Your machine. Your agent.**
 
 *Powered by Ollama. No cloud required.*
 

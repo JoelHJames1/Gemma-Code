@@ -10,22 +10,22 @@ const GHOST_BLUE = chalk.hex('#2020CC')
 const DIM = chalk.dim
 const BOLD = chalk.bold
 
-// Keep QWEN_YELLOW for spinner and prompt
-const QWEN_YELLOW = chalk.hex('#FFD700')
+// Keep GEMMA_BLUE for spinner and prompt
+const GEMMA_BLUE = chalk.hex('#4285F4')
 
 export function banner(): string {
-  const r = chalk.hex('#EE1111')             // red ghost body
+  const r = chalk.hex('#4285F4')             // Google blue ghost body
   const w = chalk.hex('#FFFFFF')             // white eyes
-  const b = chalk.hex('#2222CC')             // blue pupils
+  const b = chalk.hex('#1A237E')             // dark blue pupils
 
   return `
     ${r('      ▄████████▄')}
     ${r('    ██████████████')}
     ${r('   ████████████████')}
     ${r('   ███')}${w('████')}${r('██')}${w('████')}${r('███')}
-    ${r('   ███')}${w('██')}${b('██')}${r('██')}${w('██')}${b('██')}${r('███')}    ${BOLD('Qwen Code')} ${DIM('v1.0.0')}
+    ${r('   ███')}${w('██')}${b('██')}${r('██')}${w('██')}${b('██')}${r('███')}    ${BOLD('Gemma Code')} ${DIM('v1.0.0')}
     ${r('   ████████████████')}    ${DIM('Local-first agentic coding CLI')}
-    ${r('   ████████████████')}    ${DIM('Powered by Ollama qwen3.5:0.8b')}
+    ${r('   ████████████████')}    ${DIM('Powered by Ollama gemma4:31b')}
     ${r('   ████████████████')}
     ${r('   ████████████████')}
     ${r('   ████████████████')}
@@ -76,7 +76,7 @@ export function spinner(): { stop: () => void } {
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
   let i = 0
   const interval = setInterval(() => {
-    process.stderr.write(`\r${QWEN_YELLOW(frames[i % frames.length]!)} ${DIM('thinking...')}`)
+    process.stderr.write(`\r${GEMMA_BLUE(frames[i % frames.length]!)} ${DIM('thinking...')}`)
     i++
   }, 80)
 
@@ -89,7 +89,7 @@ export function spinner(): { stop: () => void } {
 }
 
 export function userPrompt(): string {
-  return QWEN_YELLOW('❯ ')
+  return GEMMA_BLUE('❯ ')
 }
 
 export function errorMsg(msg: string): void {
@@ -100,4 +100,4 @@ export function infoMsg(msg: string): void {
   process.stderr.write(DIM(`  ${msg}\n`))
 }
 
-export { QWEN_YELLOW, DIM, BOLD }
+export { GEMMA_BLUE, DIM, BOLD }

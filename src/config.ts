@@ -1,13 +1,13 @@
 /**
  * Configuration system — layered resolution: CLI args > env vars > config file > defaults.
- * Config file lives at ~/.config/qwen-code/config.json
+ * Config file lives at ~/.config/gemma-code/config.json
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 
-export interface QwenConfig {
+export interface GemmaConfig {
   model: string
   baseUrl: string
   contextWindow?: number     // Override auto-detected context window
@@ -16,16 +16,16 @@ export interface QwenConfig {
   requestTimeoutMs: number
 }
 
-const DEFAULTS: QwenConfig = {
-  model: 'qwen3.5:0.8b',
+const DEFAULTS: GemmaConfig = {
+  model: 'gemma4:31b',
   baseUrl: 'http://localhost:11434',
   maxToolRounds: 30,
-  projectInstructionsFile: '.qwen-code.md',
+  projectInstructionsFile: '.gemma-code.md',
   requestTimeoutMs: 120_000,
 }
 
 function getConfigDir(): string {
-  return join(homedir(), '.config', 'qwen-code')
+  return join(homedir(), '.config', 'gemma-code')
 }
 
 function getConfigPath(): string {
@@ -33,10 +33,10 @@ function getConfigPath(): string {
 }
 
 /**
- * Load config from ~/.config/qwen-code/config.json.
+ * Load config from ~/.config/gemma-code/config.json.
  * Returns empty object if file doesn't exist or is invalid.
  */
-function loadConfigFile(): Partial<QwenConfig> {
+function loadConfigFile(): Partial<GemmaConfig> {
   const path = getConfigPath()
   try {
     if (!existsSync(path)) return {}
@@ -50,9 +50,9 @@ function loadConfigFile(): Partial<QwenConfig> {
 /**
  * Resolve final config: CLI overrides > env vars > config file > defaults.
  */
-export function resolveConfig(overrides: Partial<QwenConfig> = {}): QwenConfig {
+export function resolveConfig(overrides: Partial<GemmaConfig> = {}): GemmaConfig {
   const file = loadConfigFile()
-  const env: Partial<QwenConfig> = {}
+  const env: Partial<GemmaConfig> = {}
 
   if (process.env.OLLAMA_BASE_URL) env.baseUrl = process.env.OLLAMA_BASE_URL
   if (process.env.OLLAMA_MODEL) env.model = process.env.OLLAMA_MODEL
@@ -68,7 +68,7 @@ export function resolveConfig(overrides: Partial<QwenConfig> = {}): QwenConfig {
 /**
  * Save config to disk (for future /config set commands).
  */
-export function saveConfig(config: Partial<QwenConfig>): void {
+export function saveConfig(config: Partial<GemmaConfig>): void {
   const dir = getConfigDir()
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   const existing = loadConfigFile()
@@ -79,7 +79,7 @@ export function saveConfig(config: Partial<QwenConfig>): void {
 /**
  * Format config for display.
  */
-export function formatConfig(config: QwenConfig): string {
+export function formatConfig(config: GemmaConfig): string {
   return Object.entries(config)
     .map(([k, v]) => `  ${k}: ${v}`)
     .join('\n')

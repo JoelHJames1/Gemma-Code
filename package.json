@@ -1,11 +1,11 @@
 {
-  "name": "qwen-code",
+  "name": "gemma-code",
   "version": "1.0.0",
-  "description": "Qwen Code — Agentic coding CLI powered by Ollama qwen3.5:9b",
+  "description": "Gemma Code — Agentic coding CLI powered by Ollama gemma4:31b",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "qwen": "./src/index.ts"
+    "gemma": "./src/index.ts"
   },
   "scripts": {
     "start": "bun src/index.ts",
