@@ -136,6 +136,15 @@ export function repairToolName(name: string): string {
     'spawn_agent': 'SpawnAgent',
     'spawnagent': 'SpawnAgent',
     'agent': 'SpawnAgent',
+    'web_search': 'WebSearch',
+    'websearch': 'WebSearch',
+    'google': 'WebSearch',
+    'ddg': 'WebSearch',
+    'web_fetch': 'WebFetch',
+    'webfetch': 'WebFetch',
+    'fetch': 'WebFetch',
+    'curl': 'WebFetch',
+    'download': 'WebFetch',
   }
 
   const aliasMatch = aliases[lower]

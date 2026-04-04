@@ -21,7 +21,7 @@ import { getBeliefStats } from '../knowledge/beliefs.js'
 import { getGraphStats } from '../knowledge/graph.js'
 import { getSkillStats, getAllSkills } from '../growth/skills.js'
 import { getActiveGoals } from '../growth/goals.js'
-import { getCuriosityStats } from '../growth/curiosity.js'
+import { getCuriosityStats, getOpenQuestions, answerQuestion } from '../growth/curiosity.js'
 
 // ── State ────────────────────────────────────────────────────────────────
 
@@ -90,7 +90,7 @@ function runMaintenance(): void {
   maintenanceCycleCount++
 
   // Rotate through tasks
-  const task = maintenanceCycleCount % 5
+  const task = maintenanceCycleCount % 6
 
   switch (task) {
     case 0: consolidateMemories(); break
@@ -98,6 +98,7 @@ function runMaintenance(): void {
     case 2: generateReflection(); break
     case 3: reviewGoals(); break
     case 4: assessGrowth(); break
+    case 5: autonomousResearch(); break
   }
 
   lastMaintenanceRun = Date.now()
@@ -196,6 +197,62 @@ function reviewGoals(): void {
         goal.progress.push(`[${new Date().toISOString().split('T')[0]}] Background stale check: no progress in ${Math.floor(daysSinceUpdate)} days`)
       }
     }
+  }
+}
+
+/**
+ * Autonomous research: pick a curiosity question and search the web.
+ * The AI teaches itself during idle time.
+ */
+async function autonomousResearch(): Promise<void> {
+  const questions = getOpenQuestions(3)
+  if (questions.length === 0) return
+
+  // Pick the highest priority unanswered question
+  const question = questions[0]!
+
+  try {
+    // Extract a search query from the question
+    const searchQuery = question.question
+      .replace(/^What is "?|"?\?.*$/g, '')
+      .replace(/^Why did this fail:.*$/g, '')
+      .trim()
+
+    if (searchQuery.length < 3) return
+
+    // Search the web
+    const { WebSearchTool } = await import('../tools/web.js')
+    const searchResult = await WebSearchTool.execute({
+      query: searchQuery,
+      max_results: 3,
+    })
+
+    if (searchResult.includes('No results found')) return
+
+    // Store the search results as a learned answer
+    const answer = searchResult.slice(0, 500)
+    answerQuestion(question.question.slice(0, 30), answer)
+
+    // Also store as a belief
+    const { assertBelief } = await import('../knowledge/beliefs.js')
+    assertBelief(
+      `Learned about "${searchQuery}": ${answer.slice(0, 100)}`,
+      'technical',
+      `Self-research via web search during idle time`,
+      'self-research',
+    )
+
+    // Record as autobiographical memory
+    const { recordMemory } = await import('../identity/autobiographical.js')
+    recordMemory(
+      'insight',
+      `I researched "${searchQuery}" on my own and learned: ${answer.slice(0, 150)}`,
+      'autonomous research during idle time',
+      0.5,
+      { lesson: `Self-learned: ${searchQuery}` },
+    )
+  } catch {
+    // Don't crash the daemon if research fails
   }
 }
 
