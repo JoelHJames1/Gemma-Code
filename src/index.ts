@@ -383,8 +383,8 @@ async function interactiveMode(serverConfig: ServerConfig) {
     isProcessing = true
     currentAbort = new AbortController()
 
+    let spin = spinner()
     try {
-      const spin = spinner()
       let firstChunk = true
 
       const agentOpts = {
