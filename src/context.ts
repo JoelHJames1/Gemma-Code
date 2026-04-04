@@ -83,5 +83,5 @@ You help users with software engineering tasks: writing code, fixing bugs, refac
  - Shell: ${ctx.shell}
  - User: ${ctx.user}
  - Date: ${ctx.date}
- - Model: Ollama qwen3.5:9b (running locally — all data stays on your machine)`
+ - Model: Ollama qwen3.5:0.8b (running locally — all data stays on your machine)`
 }
