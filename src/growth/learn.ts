@@ -15,7 +15,7 @@
  * The learning is stored permanently — she never forgets what she studied.
  */
 
-import { WebSearchTool, WebFetchTool } from '../tools/web.js'
+import { WebFetchTool, duckDuckGoSearch } from '../tools/web.js'
 import { ensureEntity, addRelation } from '../knowledge/graph.js'
 import { assertBelief } from '../knowledge/beliefs.js'
 import { practiceSkill, addSkillNote } from './skills.js'
@@ -79,22 +79,13 @@ export async function learnTopic(
   onProgress?.({ phase: 'Searching', detail: `Searching for "${topic}" fundamentals...` })
 
   const searchQueries = buildSearchQueries(topic, depth)
-  const allSnippets: string[] = []
   const allUrls: string[] = []
 
   for (const query of searchQueries) {
     onProgress?.({ phase: 'Searching', detail: query })
-    const searchResult = await WebSearchTool.execute({ query, max_results: 5 })
-
-    // Extract URLs and snippets
-    const lines = searchResult.split('\n')
-    for (const line of lines) {
-      if (line.trim().startsWith('http')) {
-        allUrls.push(line.trim())
-      }
-      if (line.trim().length > 20 && !line.trim().startsWith('http') && !line.match(/^\d+\./)) {
-        allSnippets.push(line.trim())
-      }
+    const results = await duckDuckGoSearch(query, 5)
+    for (const r of results) {
+      if (r.url) allUrls.push(r.url)
     }
   }
 

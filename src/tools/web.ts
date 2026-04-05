@@ -62,7 +62,7 @@ interface SearchResult {
  * Search DuckDuckGo using the HTML lite endpoint.
  * No API key. No signup. No rate limits (be respectful).
  */
-async function duckDuckGoSearch(query: string, maxResults = 8): Promise<SearchResult[]> {
+export async function duckDuckGoSearch(query: string, maxResults = 8): Promise<SearchResult[]> {
   const results: SearchResult[] = []
 
   try {
