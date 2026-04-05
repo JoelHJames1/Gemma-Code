@@ -47,10 +47,10 @@ interface BudgetConfig {
 }
 
 const DEFAULT_BUDGET: BudgetConfig = {
-  systemPrompt: 0.15,
-  pinnedState: 0.20,
-  retrievedMemory: 0.10,
-  conversation: 0.50,
+  systemPrompt: 0.12,
+  pinnedState: 0.18,
+  retrievedMemory: 0.18,
+  conversation: 0.47,
   recovery: 0.05,
 }
 
@@ -167,10 +167,10 @@ export function compileContext(
       }
     }
 
-    // (d) Relevant beliefs
-    const beliefBudget = Math.floor((memBudget - memTokens) * 0.5)
+    // (d) Relevant beliefs — primary knowledge source
+    const beliefBudget = Math.floor((memBudget - memTokens) * 0.7)
     if (beliefBudget > 30) {
-      const beliefs = searchBeliefs(currentQuery, 3)
+      const beliefs = searchBeliefs(currentQuery, 8)
       if (beliefs.length > 0) {
         const beliefText = formatBeliefsForPrompt(beliefs, beliefBudget * CHARS_PER_TOKEN)
         if (beliefText) {
