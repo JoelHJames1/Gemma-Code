@@ -75,10 +75,14 @@ interface ContextSlice {
 /** Callback for memory search events — shown in CLI */
 export type MemorySearchCallback = (event: string) => void
 let _onMemorySearch: MemorySearchCallback | null = null
+let _memorySearchShown = false
+let _memoryResultShown = false
 
 /** Set callback for memory search visibility in CLI */
 export function setMemorySearchCallback(cb: MemorySearchCallback | null): void {
   _onMemorySearch = cb
+  _memorySearchShown = false
+  _memoryResultShown = false
 }
 
 export function compileContext(
@@ -183,7 +187,10 @@ export function compileContext(
     const beliefBudget = Math.floor((memBudget - memTokens) * 0.8)
     if (beliefBudget > 30) {
       // Search with main query + extract topic-specific queries for broader recall
-      _onMemorySearch?.('🧠 Searching knowledge base...')
+      if (!_memorySearchShown) {
+        _onMemorySearch?.('🧠 Searching knowledge base...')
+        _memorySearchShown = true
+      }
       const allBeliefs = searchBeliefs(currentQuery, beliefCount)
 
       // Also search for specific technologies mentioned in the query
@@ -203,7 +210,10 @@ export function compileContext(
 
       if (allBeliefs.length > 0) {
         const codeExamples = allBeliefs.filter(b => b.statement.length > 300).length
-        _onMemorySearch?.(`🧠 Found ${allBeliefs.length} relevant beliefs${codeExamples > 0 ? ` (${codeExamples} code examples)` : ''}`)
+        if (_memorySearchShown && !_memoryResultShown) {
+          _onMemorySearch?.(`🧠 Found ${allBeliefs.length} relevant beliefs${codeExamples > 0 ? ` (${codeExamples} code examples)` : ''}`)
+          _memoryResultShown = true
+        }
         const beliefText = formatBeliefsForPrompt(allBeliefs, beliefBudget * CHARS_PER_TOKEN)
         if (beliefText) {
           memText += beliefText
