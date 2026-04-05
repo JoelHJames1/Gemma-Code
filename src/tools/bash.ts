@@ -32,8 +32,13 @@ export const BashTool: ToolDefinition = {
     let command = args.command as string
     const timeout = Math.min((args.timeout as number) || 30000, 300000)
 
+    // Auto-fix: convert backslash-escaped spaces to quoted paths
+    // Models generate: cd /path/React\ Test/portfolio → cd "/path/React Test/portfolio"
+    command = command.replace(/(\/)([^\s"'|;&>]*?\\\s[^\s"'|;&>]*)/g, (match) => {
+      return `"${match.replace(/\\ /g, ' ')}"`
+    })
+
     // Auto-fix: quote unquoted paths with spaces in common commands
-    // Matches: cd /path/with spaces, ls /path/with spaces, cat /path/with spaces, etc.
     command = command.replace(/((?:cd|ls|cat|rm|cp|mv|mkdir|chmod|chown|find|head|tail|wc|file|stat)\s+(?:-[a-zA-Z]+\s+)*)(\/[^"'&|;>]+?\s[^"'&|;>]*?)(\s*(?:&&|\|\||;|>|\||$))/g, (match, prefix, path, rest) => {
       if (path.includes('"') || path.includes("'")) return match
       return `${prefix}"${path.trim()}"${rest}`
