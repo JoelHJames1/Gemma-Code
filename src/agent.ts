@@ -31,6 +31,7 @@ import { logEvent } from './eventlog.js'
 import { compileContext } from './context-compiler.js'
 import { repairToolCall } from './tool-repair.js'
 import { enforceCapability } from './capabilities.js'
+import { lookupError, recordError, recordSolution } from './error-db.js'
 
 const MAX_TOOL_ROUNDS = 30 // Safety limit on consecutive tool-call rounds
 
@@ -190,6 +191,15 @@ export async function runAgent(
             lastFailedTool = tc.function.name
           }
         } else {
+          // Success after a failure — record what worked as the solution
+          if (lastFailedTool && consecutiveFailures > 0) {
+            const successContext = `${tc.function.name}: ${tc.function.arguments.slice(0, 300)}`
+            // Find the most recent error ID from previous tool calls
+            const prevErrors = msg.tool_calls.filter((t: any) => t._errorId)
+            for (const prev of prevErrors) {
+              recordSolution((prev as any)._errorId, successContext)
+            }
+          }
           consecutiveFailures = 0
           lastFailedTool = ''
         }
@@ -374,15 +384,47 @@ async function executeToolCall(
       result.length > maxLen
         ? result.slice(0, maxLen) + `\n\n... (truncated, ${result.length - maxLen} chars omitted)`
         : result
-    conversation.push({ role: 'tool', content: truncated, tool_call_id: tc.id })
-    logEvent('tool_result', 'agent', { tool: toolName, result: truncated.slice(0, 300) })
-    onToolEnd?.(toolName, truncated)
-    return result.startsWith('Error')
+
+    const isError = result.startsWith('Error') || result.includes('Exit code 1')
+
+    if (isError) {
+      // Record this error and check for known solutions
+      const context = `${toolName}(${JSON.stringify(args).slice(0, 200)})`
+      const errorId = recordError(truncated.slice(0, 500), toolName, context)
+      const knownFix = lookupError(truncated, toolName)
+
+      let content = truncated
+      if (knownFix) {
+        content += `\n\n💡 Known fix (${Math.round(knownFix.confidence * 100)}% confidence): ${knownFix.solution}`
+      }
+
+      conversation.push({ role: 'tool', content, tool_call_id: tc.id })
+      logEvent('tool_result', 'agent', { tool: toolName, result: truncated.slice(0, 300), errorId })
+      onToolEnd?.(toolName, truncated)
+
+      // Store errorId so we can record the solution when the next call succeeds
+      ;(tc as any)._errorId = errorId
+    } else {
+      conversation.push({ role: 'tool', content: truncated, tool_call_id: tc.id })
+      logEvent('tool_result', 'agent', { tool: toolName, result: truncated.slice(0, 300) })
+      onToolEnd?.(toolName, truncated)
+    }
+
+    return isError
   } catch (e: any) {
-    const result = `Error executing ${toolName}: ${e.message}`
-    conversation.push({ role: 'tool', content: result, tool_call_id: tc.id })
-    logEvent('error', 'agent', { tool: toolName, message: e.message })
-    onToolEnd?.(toolName, result)
+    const errorMsg = `Error executing ${toolName}: ${e.message}`
+    const context = `${toolName}(${JSON.stringify(args).slice(0, 200)})`
+    const errorId = recordError(errorMsg, toolName, context)
+    const knownFix = lookupError(errorMsg, toolName)
+
+    let content = errorMsg
+    if (knownFix) {
+      content += `\n\n💡 Known fix (${Math.round(knownFix.confidence * 100)}% confidence): ${knownFix.solution}`
+    }
+
+    conversation.push({ role: 'tool', content, tool_call_id: tc.id })
+    logEvent('error', 'agent', { tool: toolName, message: e.message, errorId })
+    onToolEnd?.(toolName, errorMsg)
     return true
   }
 }
