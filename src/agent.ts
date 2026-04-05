@@ -34,6 +34,15 @@ import { enforceCapability } from './capabilities.js'
 
 const MAX_TOOL_ROUNDS = 30 // Safety limit on consecutive tool-call rounds
 
+/**
+ * Strip Gemma 4 thinking tokens from model output.
+ * Thinking blocks look like: <|channel>thought\n...<channel|>
+ * Per Gemma docs, multi-turn history should only include the final response.
+ */
+function stripThinking(text: string): string {
+  return text.replace(/<\|channel>thought\n[\s\S]*?<channel\|>/g, '').trim()
+}
+
 export interface AgentOptions {
   stream?: boolean
   config: ServerConfig
@@ -217,8 +226,8 @@ export async function runAgent(
       continue
     }
 
-    // Got a text response — stream it to the user if streaming is enabled
-    const text = msg.content || ''
+    // Got a text response — strip thinking tokens, then stream to user
+    const text = stripThinking(msg.content || '')
     if (stream && text) {
       const words = text.split(' ')
       for (let w = 0; w < words.length; w++) {
@@ -226,6 +235,7 @@ export async function runAgent(
       }
     }
 
+    // Store without thinking tokens per Gemma docs (multi-turn best practice)
     conversation.push({ role: 'assistant', content: text })
     return text
   }
@@ -288,7 +298,7 @@ export async function runAgentWithImage(
       continue
     }
 
-    const responseText = (typeof msg.content === 'string' ? msg.content : '') || ''
+    const responseText = stripThinking((typeof msg.content === 'string' ? msg.content : '') || '')
     if (stream && responseText) {
       const words = responseText.split(' ')
       for (let w = 0; w < words.length; w++) {

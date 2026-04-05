@@ -66,6 +66,10 @@ export async function chatCompletion(
     model: config.model,
     messages,
     stream: false,
+    // Gemma 4 recommended sampling parameters
+    temperature: 1.0,
+    top_p: 0.95,
+    top_k: 64,
   }
   if (tools.length > 0) {
     body.tools = tools
@@ -132,6 +136,10 @@ export async function* chatCompletionStream(
     model: config.model,
     messages,
     stream: true,
+    // Gemma 4 recommended sampling parameters
+    temperature: 1.0,
+    top_p: 0.95,
+    top_k: 64,
   }
   if (tools.length > 0) {
     body.tools = tools
