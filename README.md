@@ -412,6 +412,9 @@ src/
     └── display.ts           Terminal output
 ```
 
+<img width="1280" height="1068" alt="image" src="https://github.com/user-attachments/assets/e2206e09-76e6-49b0-a42a-c25e2fd4e3c8" />
+
+
 ---
 
 <div align="center">
