@@ -61,6 +61,7 @@ import {
   DIM,
   formatMarkdown,
   createStreamRenderer,
+  createLiveCodeDisplay,
 } from './ui/display.js'
 
 // ── CLI argument parsing ─────────────────────────────────────────────────
@@ -425,6 +426,7 @@ async function interactiveMode(serverConfig: ServerConfig) {
     try {
       let firstChunk = true
       const renderer = createStreamRenderer()
+      const liveCode = createLiveCodeDisplay()
 
       const agentOpts = {
         stream: true,
@@ -438,8 +440,15 @@ async function interactiveMode(serverConfig: ServerConfig) {
         onText: (text: string) => {
           if (currentAbort?.signal.aborted) return
           if (firstChunk) { spin.stop(); firstChunk = false }
-          // Stream formatted text line-by-line as it arrives
           renderer.push(text)
+        },
+        onToolCallDelta: (name: string, chunk: string) => {
+          if (currentAbort?.signal.aborted) return
+          if (firstChunk) { spin.stop(); firstChunk = false }
+          liveCode.onToolCallDelta(name, chunk)
+        },
+        onToolCallComplete: () => {
+          liveCode.onToolCallComplete()
         },
         onToolStart: (name: string, args: Record<string, unknown>) => {
           if (currentAbort?.signal.aborted) return

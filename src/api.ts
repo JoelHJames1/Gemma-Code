@@ -40,9 +40,11 @@ export interface MessageContent {
 }
 
 export interface StreamDelta {
-  type: 'text' | 'tool_calls' | 'done' | 'error'
+  type: 'text' | 'tool_calls' | 'tool_call_delta' | 'done' | 'error'
   text?: string
   toolCalls?: ToolCall[]
+  /** Streaming tool call argument chunk — for live code display */
+  toolCallDelta?: { index: number; name: string; argumentChunk: string }
   error?: string
 }
 
@@ -207,13 +209,22 @@ export async function* chatCompletionStream(
             yield { type: 'text', text: delta.content }
           }
 
-          // Collect tool calls incrementally
+          // Collect tool calls incrementally + yield argument deltas for live display
           if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
               const existing = collectedToolCalls.get(tc.index)
               if (existing) {
                 if (tc.function?.arguments) {
                   existing.function.arguments += tc.function.arguments
+                  // Yield the chunk for live code streaming
+                  yield {
+                    type: 'tool_call_delta',
+                    toolCallDelta: {
+                      index: tc.index,
+                      name: existing.function.name,
+                      argumentChunk: tc.function.arguments,
+                    },
+                  }
                 }
               } else {
                 collectedToolCalls.set(tc.index, {
@@ -224,6 +235,17 @@ export async function* chatCompletionStream(
                     arguments: tc.function?.arguments || '',
                   },
                 })
+                // Yield the first chunk with name
+                if (tc.function?.name) {
+                  yield {
+                    type: 'tool_call_delta',
+                    toolCallDelta: {
+                      index: tc.index,
+                      name: tc.function.name,
+                      argumentChunk: tc.function.arguments || '',
+                    },
+                  }
+                }
               }
             }
           }

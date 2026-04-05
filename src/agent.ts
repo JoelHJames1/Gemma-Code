@@ -13,10 +13,12 @@
 
 import {
   chatCompletion,
+  chatCompletionStream,
   createVisionMessage,
   type Message,
   type MessageContent,
   type ServerConfig,
+  type StreamDelta,
 } from './api.js'
 import { resolveConfig } from './config.js'
 import { getToolSpecs, getTool, getToolNames, validateToolArgs } from './tools/index.js'
@@ -53,6 +55,10 @@ export interface AgentOptions {
   onText?: (text: string) => void
   onToolStart?: (name: string, args: Record<string, unknown>) => void
   onToolEnd?: (name: string, result: string) => void
+  /** Called with streaming tool call argument chunks — for live code display */
+  onToolCallDelta?: (name: string, chunk: string) => void
+  /** Called when a tool call is fully received (before execution) */
+  onToolCallComplete?: () => void
 }
 
 /**
@@ -76,6 +82,51 @@ export function refreshSystemPrompt(conversation: Message[], currentQuery?: stri
  * Appends the user message and all subsequent assistant/tool messages to the conversation.
  * Returns the final assistant text response.
  */
+/**
+ * Stream a chat completion, yielding tool call deltas for live code display.
+ * Returns the final assembled message (same shape as chatCompletion).
+ */
+async function streamToMessage(
+  messages: Message[],
+  tools: any[],
+  config: ServerConfig,
+  onToolCallDelta?: (name: string, chunk: string) => void,
+  onToolCallComplete?: () => void,
+  onText?: (text: string) => void,
+  streamText = true,
+): Promise<Message> {
+  // If no live display callbacks, fall back to non-streaming (faster)
+  if (!onToolCallDelta) {
+    return chatCompletion(messages, tools, config)
+  }
+
+  let content = ''
+  let toolCalls: any[] | undefined
+
+  for await (const delta of chatCompletionStream(messages, tools, config)) {
+    if (delta.type === 'text' && delta.text) {
+      content += delta.text
+      // Don't stream text here — agent.ts handles it after stripThinking
+    }
+    if (delta.type === 'tool_call_delta' && delta.toolCallDelta) {
+      onToolCallDelta(delta.toolCallDelta.name, delta.toolCallDelta.argumentChunk)
+    }
+    if (delta.type === 'tool_calls' && delta.toolCalls) {
+      toolCalls = delta.toolCalls
+      onToolCallComplete?.()
+    }
+    if (delta.type === 'error') {
+      throw new Error(delta.error)
+    }
+  }
+
+  return {
+    role: 'assistant',
+    content: content || null,
+    tool_calls: toolCalls,
+  }
+}
+
 export async function runAgent(
   conversation: Message[],
   userMessage: string,
@@ -89,6 +140,8 @@ export async function runAgent(
     onText,
     onToolStart,
     onToolEnd,
+    onToolCallDelta,
+    onToolCallComplete,
   } = options
 
   // Attach abort signal to config so chatCompletion can use it
@@ -154,10 +207,10 @@ export async function runAgent(
       logEvent('checkpoint', 'system', { round: rounds, goal: goalAnchor })
     }
 
-    // Call the model with the COMPILED context (not raw conversation)
+    // Call the model with streaming — enables live code display
     let msg: Message
     try {
-      msg = await chatCompletion(compiledContext, tools, configWithAbort)
+      msg = await streamToMessage(compiledContext, tools, configWithAbort, onToolCallDelta, onToolCallComplete, onText, stream)
     } catch (err) {
       const kind = classifyOllamaError(err)
 

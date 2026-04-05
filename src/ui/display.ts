@@ -302,6 +302,113 @@ export function formatMarkdown(text: string): string {
   return result.join('\n')
 }
 
+// ── Live code streaming display ──────────────────────────────────────────
+
+/**
+ * Shows code being written in real-time as the model generates tool call arguments.
+ * Extracts the "content" field from Write tool JSON and displays it line by line.
+ */
+export function createLiveCodeDisplay(): {
+  onToolCallDelta: (name: string, chunk: string) => void
+  onToolCallComplete: () => void
+} {
+  let buffer = ''
+  let isWriteTool = false
+  let inContentField = false
+  let linesShown = 0
+  let headerShown = false
+  const MAX_LIVE_LINES = 30
+
+  return {
+    onToolCallDelta(name: string, chunk: string) {
+      if (name === 'Write' || name === 'Edit') {
+        isWriteTool = true
+        buffer += chunk
+
+        // Detect when we enter the "content" field value in JSON
+        if (!inContentField) {
+          const contentStart = buffer.indexOf('"content"')
+          if (contentStart >= 0) {
+            // Find the start of the string value after "content":
+            const afterKey = buffer.indexOf(':', contentStart + 9)
+            if (afterKey >= 0) {
+              const valueStart = buffer.indexOf('"', afterKey + 1)
+              if (valueStart >= 0) {
+                inContentField = true
+                // Show header
+                if (!headerShown) {
+                  process.stderr.write(DIM('  ┌─ writing code ─\n'))
+                  headerShown = true
+                }
+                // Process any content already in buffer after the opening quote
+                buffer = buffer.slice(valueStart + 1)
+              }
+            }
+          }
+          return
+        }
+
+        // Stream content lines as they arrive
+        if (inContentField && linesShown < MAX_LIVE_LINES) {
+          // Process complete lines from buffer
+          while (true) {
+            // Look for newline (escaped as \n in JSON string)
+            const nlIdx = buffer.indexOf('\\n')
+            const endIdx = buffer.indexOf('"') // End of JSON string
+
+            if (endIdx >= 0 && (nlIdx < 0 || endIdx < nlIdx)) {
+              // End of content field — show remaining
+              const remaining = buffer.slice(0, endIdx).replace(/\\t/g, '  ').replace(/\\"/g, '"')
+              if (remaining.trim() && linesShown < MAX_LIVE_LINES) {
+                process.stderr.write(DIM('  │ ') + chalk.gray(remaining.slice(0, 100)) + '\n')
+                linesShown++
+              }
+              inContentField = false
+              buffer = ''
+              break
+            }
+
+            if (nlIdx >= 0) {
+              const line = buffer.slice(0, nlIdx).replace(/\\t/g, '  ').replace(/\\"/g, '"')
+              buffer = buffer.slice(nlIdx + 2)
+
+              if (linesShown < MAX_LIVE_LINES) {
+                // Color code lines based on content
+                const trimmed = line.trim()
+                let colored = chalk.gray(line.slice(0, 100))
+                if (trimmed.startsWith('import ') || trimmed.startsWith('from ')) colored = chalk.cyan(line.slice(0, 100))
+                else if (trimmed.startsWith('export ') || trimmed.startsWith('function ') || trimmed.startsWith('const ') || trimmed.startsWith('class ')) colored = chalk.green(line.slice(0, 100))
+                else if (trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) colored = DIM(line.slice(0, 100))
+                else if (trimmed.startsWith('return ')) colored = chalk.yellow(line.slice(0, 100))
+
+                process.stderr.write(DIM('  │ ') + colored + '\n')
+                linesShown++
+              } else if (linesShown === MAX_LIVE_LINES) {
+                process.stderr.write(DIM('  │ ... (streaming)\n'))
+                linesShown++
+              }
+            } else {
+              break // No complete line yet, wait for more data
+            }
+          }
+        }
+      }
+    },
+
+    onToolCallComplete() {
+      if (isWriteTool && headerShown) {
+        process.stderr.write(DIM('  └──\n'))
+      }
+      // Reset
+      buffer = ''
+      isWriteTool = false
+      inContentField = false
+      linesShown = 0
+      headerShown = false
+    },
+  }
+}
+
 // ── Streaming markdown renderer ─────────────────────────────────────────
 
 /**
