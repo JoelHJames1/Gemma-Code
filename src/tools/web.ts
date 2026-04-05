@@ -226,6 +226,76 @@ export const WebSearchTool: ToolDefinition = {
   },
 }
 
+// ── Readability extraction (ported from OpenClaw) ───────────────────────
+
+/**
+ * Convert HTML to clean markdown — preserves headings, links, and lists.
+ */
+function htmlToMarkdown(html: string): { text: string; title?: string } {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+  const title = titleMatch ? htmlToText(titleMatch[1]!).trim() : undefined
+
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
+
+  // Convert links to markdown
+  text = text.replace(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, body) => {
+    const label = htmlToText(body).trim()
+    return label ? `[${label}](${href})` : href
+  })
+  // Convert headings
+  text = text.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, level, body) => {
+    const prefix = '#'.repeat(Math.max(1, Math.min(6, parseInt(level, 10))))
+    return `\n${prefix} ${htmlToText(body).trim()}\n`
+  })
+  // Convert list items
+  text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, body) => {
+    const label = htmlToText(body).trim()
+    return label ? `\n- ${label}` : ''
+  })
+  // Line breaks and block elements
+  text = text
+    .replace(/<(br|hr)\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|section|article|header|footer|table|tr|ul|ol)>/gi, '\n')
+  // Strip remaining tags and clean whitespace
+  text = htmlToText(text)
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim()
+
+  return { text, title }
+}
+
+/**
+ * Extract readable content using Mozilla Readability (same as OpenClaw).
+ * Falls back to htmlToMarkdown if Readability fails.
+ */
+async function extractReadableContent(html: string, url: string): Promise<{ text: string; title?: string }> {
+  try {
+    const [{ Readability }, { parseHTML }] = await Promise.all([
+      import('@mozilla/readability'),
+      import('linkedom'),
+    ])
+    const { document } = parseHTML(html)
+    try { (document as any).baseURI = url } catch {}
+
+    const reader = new Readability(document, { charThreshold: 0 })
+    const parsed = reader.parse()
+    if (parsed?.content) {
+      const rendered = htmlToMarkdown(parsed.content)
+      return { text: rendered.text, title: parsed.title || rendered.title }
+    }
+  } catch {}
+  // Fallback to simple markdown conversion
+  return htmlToMarkdown(html)
+}
+
+// ── WebFetch Tool ───────────────────────────────────────────────────────
+
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+
 export const WebFetchTool: ToolDefinition = {
   spec: {
     type: 'function',
@@ -233,8 +303,8 @@ export const WebFetchTool: ToolDefinition = {
       name: 'WebFetch',
       description:
         'Fetch a web page and extract its readable text content. ' +
-        'Use after WebSearch to read a specific page, documentation, ' +
-        'or code example. Returns cleaned text (HTML stripped).',
+        'Uses Readability (same as Firefox Reader View) for clean extraction. ' +
+        'Use after WebSearch to read documentation, articles, or code examples.',
       parameters: {
         type: 'object',
         properties: {
@@ -259,8 +329,9 @@ export const WebFetchTool: ToolDefinition = {
     try {
       const res = await fetch(url, {
         headers: {
-          'User-Agent': 'Ghost-Code/1.0 (autonomous coding agent)',
-          'Accept': 'text/html,application/xhtml+xml,text/plain',
+          'User-Agent': BROWSER_UA,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
         },
         signal: AbortSignal.timeout(15_000),
         redirect: 'follow',
@@ -273,18 +344,19 @@ export const WebFetchTool: ToolDefinition = {
       const contentType = res.headers.get('content-type') || ''
       const body = await res.text()
 
-      // If it's plain text or JSON, return as-is
+      // Plain text or JSON — return as-is
       if (contentType.includes('text/plain') || contentType.includes('application/json')) {
         return body.slice(0, maxChars)
       }
 
-      // Extract readable text from HTML
-      const text = htmlToText(body)
+      // HTML — extract with Readability (clean article extraction)
+      const { text, title } = await extractReadableContent(body, url)
       if (text.length < 50) {
         return `Page at ${url} had no readable text content (might require JavaScript).`
       }
 
-      return text.slice(0, maxChars)
+      const header = title ? `# ${title}\n\n` : ''
+      return (header + text).slice(0, maxChars)
     } catch (e: any) {
       return `Error fetching ${url}: ${e.message}`
     }
