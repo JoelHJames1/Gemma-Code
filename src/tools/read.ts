@@ -31,7 +31,8 @@ export const ReadTool: ToolDefinition = {
   },
 
   async execute(args) {
-    const filePath = args.file_path as string
+    // Unescape shell-style backslash-spaces: "Programming\ Task" → "Programming Task"
+    const filePath = (args.file_path as string).replace(/\\ /g, ' ')
     const offset = (args.offset as number) || 0
     const limit = (args.limit as number) || 2000
 

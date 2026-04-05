@@ -35,7 +35,7 @@ export const EditTool: ToolDefinition = {
   },
 
   async execute(args) {
-    const filePath = args.file_path as string
+    const filePath = (args.file_path as string).replace(/\\ /g, ' ')
     const oldStr = args.old_string as string
     const newStr = args.new_string as string
     const replaceAll = (args.replace_all as boolean) || false

@@ -28,7 +28,7 @@ export const WriteTool: ToolDefinition = {
   },
 
   async execute(args) {
-    const filePath = args.file_path as string
+    const filePath = (args.file_path as string).replace(/\\ /g, ' ')
     const content = args.content as string
 
     try {

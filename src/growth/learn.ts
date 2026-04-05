@@ -22,6 +22,8 @@ import { practiceSkill, addSkillNote } from './skills.js'
 import { recordMemory } from '../identity/autobiographical.js'
 import { createGoal, updateGoalProgress, achieveMilestone } from './goals.js'
 import { logEvent } from '../eventlog.js'
+import { chatCompletion, type ServerConfig } from '../api.js'
+import { resolveConfig } from '../config.js'
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -191,8 +193,8 @@ export async function learnTopic(
   // ── Phase 3: Extract concepts ─────────────────────────────────────
   onProgress?.({ phase: 'Extracting', detail: 'Extracting core concepts...' })
 
-  // Only extract concepts from actual page content, not search snippets
-  const concepts = extractConcepts(topic, pageContents)
+  // Use the model to extract concepts — no hardcoded heuristics
+  const concepts = await extractConceptsWithModel(topic, pageContents)
   result.conceptsLearned = concepts
 
   achieveMilestone(goal.id, 'Extract concepts')
@@ -290,112 +292,65 @@ function buildSearchQueries(topic: string, depth: 'quick' | 'normal' | 'deep'): 
   return queries
 }
 
-// ── Concept extraction ───────────────────────────────────────────────────
-
-/** Lines that are navigation, boilerplate, or noise — not real concepts. */
-function isJunkLine(line: string): boolean {
-  const l = line.toLowerCase()
-  // Search result artifacts
-  if (l.startsWith('search results for')) return true
-  // Pure URLs or markdown links that are just navigation
-  if (/^\[?https?:\/\//.test(line)) return true
-  // Markdown links without explanatory text (just "[Label](url)" style nav)
-  if (/^\[.{1,50}\]\(http/.test(line) && line.length < 80) return true
-  // Lines that are mostly markdown link syntax (link lists / nav menus)
-  if ((line.match(/\]\(/g) || []).length >= 1 && (line.match(/\]\(/g) || []).length * 30 > line.length) return true
-  // Single-word or short bracket labels that are clearly nav items
-  if (/^\[[\w\s]{1,25}\]\(/.test(line) && line.length < 60) return true
-  // Navigation / CTA / site chrome
-  if (/^(click|sign in|log in|subscribe|download now|install|try it|start learning|next|previous|menu|home|back to|read more|see also|related|you will|in our|this is an optional|you can study)/i.test(l)) return true
-  // Reference sections / site chrome
-  if (/^(you will also find|complete function|method references|check your level|many chapters|this tutorial)/i.test(l)) return true
-  // Title lines with URLs appended
-  if (/https?:\/\//.test(line) && line.indexOf('http') > line.length * 0.4) return true
-  // Copyright, cookie banners
-  if (/copyright|cookie|privacy policy|terms of|all rights reserved/i.test(l)) return true
-  // Too many special characters (likely markup noise)
-  if ((line.match(/[»›→←▶◀|►☆★©®™]/g) || []).length > 1) return true
-  // Mostly punctuation/symbols (less than 60% alpha)
-  const alphaRatio = (line.match(/[a-zA-Z]/g) || []).length / line.length
-  if (alphaRatio < 0.5) return true
-  return false
-}
+// ── Concept extraction (model-based) ────────────────────────────────────
 
 /**
- * Extract core concepts from page content about a topic.
- * Prioritizes: definitions > heading-context pairs > substantive statements.
+ * Use the model itself to extract important concepts from page content.
+ * No hardcoded heuristics — the model reads the text and decides what's
+ * worth learning, just like a human would.
  */
-function extractConcepts(topic: string, texts: string[]): string[] {
-  const concepts: string[] = []
-  const seen = new Set<string>()
-  const topicLower = topic.toLowerCase()
-  const topicPrefix = topicLower.slice(0, Math.min(4, topicLower.length))
-
-  for (const text of texts) {
-    const lines = text.split('\n')
-    let lastHeading = ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (trimmed.length < 25 || trimmed.length > 250) continue
-      if (isJunkLine(trimmed)) continue
-
-      // Track headings for context
-      const headingMatch = trimmed.match(/^#{1,3}\s+(.+)/)
-      if (headingMatch) {
-        lastHeading = headingMatch[1]!.trim()
-        continue
-      }
-
-      const lower = trimmed.toLowerCase()
-      // Strip markdown list markers for the clean concept text
-      const clean = trimmed.replace(/^[-•*]\s+/, '').replace(/^\d+[\.)]\s+/, '').slice(0, 180)
-
-      // Priority 1: "X is a/an/the Y" definitions
-      if (/\b(?:is|are)\s+(?:a|an|the)\s+/i.test(clean) && lower.includes(topicPrefix)) {
-        addConcept(concepts, seen, clean)
-        continue
-      }
-
-      // Priority 2: "X is used for Y" / "X allows Y" functional descriptions
-      if (/\b(?:is used|can be used|allows?|enables?|provides?|supports?|designed for|built for)\b/i.test(clean) && lower.includes(topicPrefix)) {
-        addConcept(concepts, seen, clean)
-        continue
-      }
-
-      // Priority 3: Lines under a relevant heading that contain substance
-      if (lastHeading && lastHeading.toLowerCase().includes(topicPrefix)) {
-        // Must be a statement (has a verb), not just a label
-        if (/\b(?:is|are|was|were|has|have|can|will|use|run|create|return|define|call|import|store)\b/i.test(clean)) {
-          addConcept(concepts, seen, clean)
-          continue
-        }
-      }
-
-      // Priority 4: Bulleted/numbered items mentioning the topic with a colon (key: value pattern)
-      if (/^[-•*]\s|^\d+[\.)]\s/.test(trimmed) && lower.includes(topicPrefix) && clean.includes(':')) {
-        addConcept(concepts, seen, clean)
-        continue
-      }
-    }
+async function extractConceptsWithModel(topic: string, texts: string[]): Promise<string[]> {
+  const config = resolveConfig()
+  const serverConfig: ServerConfig = {
+    baseUrl: config.baseUrl,
+    model: config.model,
+    requestTimeoutMs: config.requestTimeoutMs,
   }
 
-  return concepts.slice(0, 50)
-}
+  // Combine all page content, truncated to fit in context
+  const combined = texts.join('\n\n---\n\n').slice(0, 60000)
 
-function addConcept(concepts: string[], seen: Set<string>, concept: string): void {
-  // Deduplicate by first 40 chars (catches near-duplicates)
-  const key = concept.toLowerCase().replace(/[^a-z0-9 ]/g, '').slice(0, 40)
-  if (seen.has(key)) return
-  if (key.length < 15) return // Too short to be meaningful
-  // Must have enough real words (not just markup or labels)
-  const words = concept.split(/\s+/).filter(w => w.length > 2 && !/^\[|^\(|^\]|^\)|^http/.test(w))
-  if (words.length < 4) return
-  seen.add(key)
-  // Clean markdown links: "[Label](url) – desc" → "Label – desc"
-  const cleaned = concept
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim()
-  concepts.push(cleaned)
+  const messages = [
+    {
+      role: 'system' as const,
+      content: `You are a knowledge extraction assistant. Extract the most important technical concepts, definitions, and facts from the provided text about "${topic}".
+
+Rules:
+- Return ONLY a numbered list of concepts, one per line
+- Each concept should be a clear, self-contained statement of knowledge
+- Focus on: definitions, how things work, key features, important patterns, best practices
+- Skip: navigation text, ads, CTAs, site chrome, exercise prompts, links, meta-tutorial text ("in this tutorial we will...")
+- Keep each concept to 1-2 sentences max
+- Extract 30-50 concepts if there's enough substance
+- Do NOT include URLs or markdown formatting`,
+    },
+    {
+      role: 'user' as const,
+      content: `Extract the key technical concepts about "${topic}" from this documentation:\n\n${combined}`,
+    },
+  ]
+
+  try {
+    const response = await chatCompletion(messages, [], serverConfig)
+    const text = response.content || ''
+
+    // Parse numbered list from model response
+    const concepts: string[] = []
+    const seen = new Set<string>()
+    for (const line of text.split('\n')) {
+      // Match "1. concept" or "- concept" or just plain lines
+      const cleaned = line.replace(/^\s*\d+[\.)]\s*/, '').replace(/^\s*[-•*]\s*/, '').trim()
+      if (cleaned.length < 15 || cleaned.length > 300) continue
+
+      const key = cleaned.toLowerCase().slice(0, 40)
+      if (seen.has(key)) continue
+      seen.add(key)
+      concepts.push(cleaned)
+    }
+
+    return concepts.slice(0, 50)
+  } catch (e) {
+    // Fallback: return empty if model call fails
+    return []
+  }
 }
