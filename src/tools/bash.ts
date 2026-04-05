@@ -29,8 +29,15 @@ export const BashTool: ToolDefinition = {
   },
 
   async execute(args) {
-    const command = args.command as string
+    let command = args.command as string
     const timeout = Math.min((args.timeout as number) || 30000, 300000)
+
+    // Auto-fix: quote unquoted paths with spaces in cd commands
+    command = command.replace(/cd\s+(\/[^"'&|;]+?\s[^"'&|;]*?)(\s*&&|\s*$)/g, (_, path, rest) => {
+      // Don't re-quote if already quoted
+      if (path.startsWith('"') || path.startsWith("'")) return _
+      return `cd "${path.trim()}"${rest}`
+    })
 
     try {
       const output = execSync(command, {
